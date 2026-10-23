@@ -10,4 +10,4 @@
 - [Исходные контрольные материалы](requirements/source-materials.md) — состав и назначение архивов.
 - [Понимание предметной области](understanding.md) — подтверждённые сведения и открытые вопросы.
 
-Исходного кода программы в репозитории пока нет. Целевая поставка — Windows `.exe`; язык — Python, GUI — PySide6/Qt Widgets.
+Текущая версия `0.1.0` реализует ввод и подготовку данных. [Установка и проверки](docs/development/setup.md) · [Руководство по вводу](docs/user-guide/data-entry.md) · [Архитектура этапа 2](docs/architecture/data-entry.md). Расчётное ядро и Windows `.exe` относятся к следующим этапам; язык — Python, GUI — PySide6/Qt Widgets.

@@ -10,4 +10,4 @@
 - [Исходные контрольные материалы](requirements/source-materials.md) — состав и назначение архивов.
 - [Понимание предметной области](understanding.md) — подтверждённые сведения и открытые вопросы.
 
-Текущая версия `0.1.0` реализует ввод и подготовку данных. [Установка и проверки](docs/development/setup.md) · [Руководство по вводу](docs/user-guide/data-entry.md) · [Архитектура этапа 2](docs/architecture/data-entry.md). Расчётное ядро и Windows `.exe` относятся к следующим этапам; язык — Python, GUI — PySide6/Qt Widgets.
+Текущая версия `0.2.0` реализует ввод, подготовку данных и расчёт К0–К2 без GUI. [Установка и проверки](docs/development/setup.md) · [Руководство по вводу](docs/user-guide/data-entry.md) · [Расчёт из CLI](docs/user-guide/calculation.md) · [Алгоритм](docs/algorithms/k0-k2.md). Связь расчёта с GUI и Windows `.exe` относятся к следующим этапам; язык — Python, GUI — PySide6/Qt Widgets.

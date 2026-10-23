@@ -245,7 +245,7 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
             c.check(row.get("drop_reason") == "", "TYPE_DROP", place, "drop_reason", "полученный пакет не может иметь причину окончательной потери")
         else:
             c.check(copies == 0, "RANGE_COPIES", place, "rx_copy_count", "без приёма число копий должно быть 0")
-            if None not in (tx, obs, timeout) and obs < tx + timeout:
+            if None not in (tx, obs, timeout) and obs <= tx + timeout and not row.get("drop_reason"):
                 c.warn("INCOMPLETE_PACKET", place, "observed_until_s", "ожидание доставки не завершено")
         if row.get("observation_status") != "complete":
             c.warn("INCOMPLETE_PACKET", place, "observation_status", "наблюдение пакета неполное")

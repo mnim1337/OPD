@@ -22,6 +22,8 @@ def validate_profile(profile: Any) -> list[Diagnostic]:
         return errors
     if not isinstance(profile.get("profile_id"), str) or not profile["profile_id"]:
         error("PROFILE_ID", "Ω.profile_id", "нужен идентификатор профиля")
+    if not any(isinstance(profile.get(key), str) and profile[key].strip() for key in ("basis_ru", "note_ru")):
+        error("PROFILE_BASIS", "Ω", "нужно описание оснований для шкал и весов")
     metrics = profile.get("metrics")
     if not isinstance(metrics, dict) or set(metrics) != set(METRICS):
         error("PROFILE_METRICS", "Ω.metrics", "нужны ровно семь фиксированных шкал")
@@ -65,6 +67,15 @@ def validate_profile(profile: Any) -> list[Diagnostic]:
                 previous_x, previous_y = x, y
             except (InvalidOperation, TypeError, ValueError):
                 error("PROFILE_POINT", f"{place}.points[{index}]", "опора должна содержать два конечных числа")
+        if previous_y is not None:
+            try:
+                first_y = Decimal(str(points[0][1]))
+                last_y = Decimal(str(points[-1][1]))
+                expected = (Decimal(1), Decimal(0)) if DIRECTIONS[key] == "min" else (Decimal(0), Decimal(1))
+                if (first_y, last_y) != expected:
+                    error("PROFILE_ENDS", place, "крайние опоры должны давать оценки 0 и 1 в принятом направлении")
+            except (IndexError, InvalidOperation, TypeError, ValueError):
+                pass
     if abs(total - 1) > Decimal("0.000000001"):
         error("PROFILE_SUM", "Ω.metrics", "сумма весов должна быть 1")
     return errors

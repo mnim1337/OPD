@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from .core import calculate
+from .core.runner import CalculationError
 from .io.format import DataError, export_four, read_folder
 from .io.storage import DraftStore
 from .io.validation import validate_experiment
@@ -25,6 +27,10 @@ def main() -> int:
     restore.add_argument("--id", required=True)
     restore.add_argument("--revision", type=int)
     restore.add_argument("folder", type=Path)
+    evaluation = sub.add_parser("calculate", help="рассчитать К0–К2 без GUI")
+    evaluation.add_argument("folder", type=Path)
+    evaluation.add_argument("--profile", type=Path, required=True)
+    evaluation.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "check":
@@ -37,11 +43,23 @@ def main() -> int:
             experiment = read_folder(args.folder)
             revision = DraftStore(args.store).save(args.id, experiment)
             print(f"{args.id}: версия {revision} сохранена")
-        else:
+        elif args.command == "export-draft":
             experiment, _, revision = DraftStore(args.store).load(args.id, args.revision)
             export_four(experiment, args.folder)
             print(f"{args.id}: версия {revision} экспортирована в {args.folder}")
-    except (DataError, KeyError, OSError, ValueError) as exc:
+        else:
+            experiment = read_folder(args.folder)
+            with args.profile.open(encoding="utf-8") as stream:
+                profile = json.load(stream)
+            report = calculate(experiment, profile)
+            payload = json.dumps(report.as_dict(), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(payload, encoding="utf-8")
+                print(f"Расчёт {experiment.experiment_id} записан в {args.output}")
+            else:
+                print(payload, end="")
+    except (DataError, CalculationError, KeyError, OSError, ValueError) as exc:
         parser.exit(2, f"Ошибка: {exc}\n")
     return 0
 

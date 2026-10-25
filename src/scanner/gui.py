@@ -1459,6 +1459,21 @@ class MainWindow(QMainWindow):
             return False
         if choice == QMessageBox.StandardButton.Save:
             return self.save_draft()
+        try:
+            if self.draft_id is None:
+                experiment = Experiment(empty_passport(), {name: [] for name in HEADERS})
+                self._set_experiment(experiment)
+                self.statusBar().showMessage("Несохранённые изменения отброшены")
+            else:
+                passport, tables, source, originals, profile, revision = self.store.load_raw(self.draft_id)
+                experiment = Experiment(passport, tables, originals, source)
+                self._set_experiment(experiment, profile)
+                self.statusBar().showMessage(
+                    f"Несохранённые изменения отброшены; восстановлена версия {revision} черновика {self.draft_id}"
+                )
+        except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            self._error(exc)
+            return False
         return True
 
     def _set_experiment(self, experiment: Experiment, profile: dict[str, Any] | None = None) -> None:

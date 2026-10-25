@@ -236,3 +236,151 @@ def test_closing_nonempty_series_shows_saved_count_and_result_access(
     window.close()
     window.deleteLater()
     app.processEvents()
+
+
+def test_discard_unsaved_changes_restores_last_saved_draft_before_navigation(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "discard-draft.sqlite3")
+    revision = window.store.save("saved-draft", experiment, {"profile_id": "", "metrics": {}})
+    saved, profile, _ = window.store.load("saved-draft", revision)
+    window.draft_id = "saved-draft"
+    window._set_experiment(saved, profile)
+
+    edited = window.passport.value()
+    edited["experiment_id"] = "UNSAVED-EDIT"
+    window.passport.set_value(edited)
+    window.dirty = True
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
+    )
+
+    window.back_to_experiments()
+
+    assert window.pages.currentWidget() is window.experiments_page
+    assert window.passport.value()["experiment_id"] == experiment.experiment_id
+    assert window.dirty is False
+    assert window.store.list_drafts()[0][:2] == ("saved-draft", revision)
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_cancel_unsaved_changes_keeps_form_open_and_unchanged(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "cancel-draft.sqlite3")
+    window._set_experiment(experiment)
+    window.show_editor()
+    edited = window.passport.value()
+    edited["experiment_id"] = "UNSAVED-EDIT"
+    window.passport.set_value(edited)
+    window.dirty = True
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    window.back_to_experiments()
+
+    assert window.pages.currentWidget() is window.editor_page
+    assert window.passport.value()["experiment_id"] == "UNSAVED-EDIT"
+    assert window.dirty is True
+    window.dirty = False
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_save_unsaved_changes_persists_new_revision_before_navigation(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "save-draft.sqlite3")
+    revision = window.store.save("saved-draft", experiment, {"profile_id": "", "metrics": {}})
+    saved, profile, _ = window.store.load("saved-draft", revision)
+    window.draft_id = "saved-draft"
+    window._set_experiment(saved, profile)
+    edited = window.passport.value()
+    edited["experiment_id"] = "SAVED-EDIT"
+    window.passport.set_value(edited)
+    window.dirty = True
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Save,
+    )
+
+    window.back_to_experiments()
+
+    assert window.pages.currentWidget() is window.experiments_page
+    current, _, new_revision = window.store.load("saved-draft")
+    assert new_revision == revision + 1
+    assert current.experiment_id == "SAVED-EDIT"
+    assert window.dirty is False
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_cancel_then_discard_unsaved_changes_on_application_exit(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "exit-discard.sqlite3")
+    revision = window.store.save("exit-draft", experiment, {"profile_id": "", "metrics": {}})
+    saved, profile, _ = window.store.load("exit-draft", revision)
+    window.draft_id = "exit-draft"
+    window._set_experiment(saved, profile)
+    edited = window.passport.value()
+    edited["experiment_id"] = "UNSAVED-EXIT-EDIT"
+    window.passport.set_value(edited)
+    window.dirty = True
+    choices = iter((QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Discard))
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: next(choices))
+
+    assert window.close() is False
+    assert window.dirty is True
+    assert window.passport.value()["experiment_id"] == "UNSAVED-EXIT-EDIT"
+
+    assert window.close() is True
+    restored, _, restored_revision = window.store.load("exit-draft")
+    assert restored_revision == revision
+    assert restored.experiment_id == experiment.experiment_id
+    assert window.dirty is False
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_save_unsaved_changes_on_application_exit_persists_new_revision(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "exit-save.sqlite3")
+    revision = window.store.save("exit-save-draft", experiment, {"profile_id": "", "metrics": {}})
+    saved, profile, _ = window.store.load("exit-save-draft", revision)
+    window.draft_id = "exit-save-draft"
+    window._set_experiment(saved, profile)
+    edited = window.passport.value()
+    edited["experiment_id"] = "SAVED-EXIT-EDIT"
+    window.passport.set_value(edited)
+    window.dirty = True
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Save,
+    )
+
+    assert window.close() is True
+    persisted, _, persisted_revision = window.store.load("exit-save-draft")
+    assert persisted_revision == revision + 1
+    assert persisted.experiment_id == "SAVED-EXIT-EDIT"
+    assert window.dirty is False
+    window.deleteLater()
+    app.processEvents()

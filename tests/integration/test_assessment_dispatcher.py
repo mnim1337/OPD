@@ -131,11 +131,18 @@ def test_comparability_ignores_measured_outcomes_but_checks_conditions(
     second = copy.deepcopy(first)
     second.tables["routes.csv"][0]["route_state"] = "unknown"
     second.tables["channels.csv"][0]["tx_data_bytes"] = 0
+    if second.passport.get("scenario", {}).get("events"):
+        second.passport["scenario"]["events"][0]["actual_time_s"] = 999
+        second.passport["scenario"]["events"][0]["result"] = "failed"
     profile = {"metrics": {}}
     assert comparability_reasons(first, profile, second, profile) == []
 
     second.passport["network"]["network_id"] = "different-network"
     assert comparability_reasons(first, profile, second, profile) == ["Состав или исходное состояние сети"]
+    second.passport["network"]["network_id"] = first.passport["network"]["network_id"]
+    if second.passport.get("scenario", {}).get("events"):
+        second.passport["scenario"]["events"][0]["scheduled_time_s"] += 1
+        assert comparability_reasons(first, profile, second, profile) == ["Внешние события и их расписание"]
 
 
 def test_cancellation_keeps_pinned_input_but_does_not_store_partial_assessment(

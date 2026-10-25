@@ -29,10 +29,18 @@ def _stable(value: Any) -> Any:
 
 def _signature(experiment: Experiment, profile: dict[str, Any]) -> dict[str, Any]:
     passport = experiment.passport
+    events = passport.get("scenario", {}).get("events", [])
+    event_conditions = [
+        {key: _stable(event.get(key)) for key in (
+            "event_id", "event_type", "object_type", "object_ids", "scheduled_time_s", "changes",
+        )}
+        for event in events
+    ]
     return {
         "network": _stable(passport.get("network", {})),
         "traffic": _stable(passport.get("traffic", {})),
-        "events": _stable(passport.get("scenario", {}).get("events", [])),
+        # Actual execution time and success are observations; compare the planned intervention.
+        "events": event_conditions,
         "measurement": _stable(passport.get("measurement", {})),
         "scales_and_weights": _stable(profile.get("metrics", {})),
     }

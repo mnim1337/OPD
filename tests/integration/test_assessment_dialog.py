@@ -9,7 +9,9 @@ from zipfile import ZipFile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QTableWidget, QTabWidget
+from PySide6.QtWidgets import (
+    QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QPlainTextEdit, QTableWidget, QTabWidget,
+)
 
 from scanner.core import calculate
 from scanner.core.dispatcher import calculate_and_save
@@ -201,6 +203,40 @@ def test_comparison_view_explains_incomparable_conditions_without_ranking() -> N
     comparable.close()
     incomparable.deleteLater()
     comparable.deleteLater()
+    app.processEvents()
+
+
+def test_explanation_tab_separates_rebuild_time_and_confirmation_window(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        names = archive.namelist()
+        passport_path = next(name for name in names if name.endswith("EXP01_REACTIVE_4/experiment.json"))
+        prefix = passport_path.rsplit("/", 1)[0] + "/"
+        folder = tmp_path / "adaptivity-explanation"
+        folder.mkdir()
+        for name in names:
+            if name.startswith(prefix) and not name.endswith("/"):
+                target = folder / name.removeprefix(prefix)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(name))
+        profile_name = next(name for name in names if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    experiment = read_folder(folder)
+    payload = calculate(experiment, profile).as_dict()
+    dialog = AssessmentDialog(payload, True, experiment)
+    explanation = dialog.findChild(QPlainTextEdit)
+    assert explanation is not None
+    data = json.loads(explanation.toPlainText())
+    assert data["formula_sources"]["P_ad"] == "(3.27)–(3.30)"
+    checks = data["metrics"]["P_ad"]["trace"]["checks"]
+    assert checks[0]["check_id"] == "F01_AD01"
+    assert checks[0]["time_s"] == "0.600000000"
+    assert checks[0]["confirmation_window_s"] == "0.2"
+    assert any("Демонстрационный профиль Ω" in warning for warning in data["warnings"])
+    dialog.close()
+    dialog.deleteLater()
     app.processEvents()
 
 

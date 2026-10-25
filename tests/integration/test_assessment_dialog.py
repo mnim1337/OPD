@@ -7,10 +7,13 @@ from zipfile import ZipFile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QTableWidget, QTabWidget
+from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QTableWidget, QTabWidget
 
 from scanner.core import calculate
-from scanner.gui import AssessmentDialog, MainWindow, SeriesManagerDialog
+from scanner.gui import (
+    AssessmentDialog, MainWindow, NetworkMark, PassportEditor, SeriesManagerDialog, TableEditor,
+)
 from scanner.io.format import read_folder
 
 
@@ -92,13 +95,27 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     app = QApplication.instance() or QApplication([])
     window = MainWindow(tmp_path / "drafts.sqlite3")
     assert window.pages.currentWidget() is window.start_page
-    window.show_main_menu()
+    mark = window.findChild(NetworkMark)
+    assert mark is not None and mark.grab().width() >= 220
+    assert window.findChildren(QPushButton)
+    assert {button.text() for button in window.main_menu_page.findChildren(QPushButton)} == {
+        "Эксперименты", "Справка", "О программе", "Выход",
+    }
+    assert {button.text() for button in window.editor_page.findChildren(QPushButton)}.issuperset({
+        "Назад", "Сохранить черновик", "Проверить данные", "Запуск расчёта",
+    })
+
+    def click(page, label: str) -> None:
+        button = next(button for button in page.findChildren(QPushButton) if button.text() == label)
+        button.click()
+
+    click(window.start_page, "Начать")
     assert window.pages.currentWidget() is window.main_menu_page
-    window.show_experiments()
+    click(window.main_menu_page, "Эксперименты")
     assert window.pages.currentWidget() is window.experiments_page
-    window.show_input_choices()
+    click(window.experiments_page, "Начать новый эксперимент")
     assert window.pages.currentWidget() is window.input_page
-    window.new()
+    click(window.input_page, "Открыть пустые формы")
     assert window.pages.currentWidget() is window.editor_page
     series_id = window.store.create_series("Продолжение опыта")
     window.active_series_id = series_id
@@ -121,6 +138,64 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert window.pages.currentWidget() is window.assessment_panel
     window.close_assessment()
     assert window.pages.currentWidget() is window.results_page
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = read_folder(reference_folder).passport
+    editor = PassportEditor(original)
+    assert editor.tabs.count() == 7
+    assert editor.value() == original
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_table_editor_supports_add_copy_paste_and_delete() -> None:
+    app = QApplication.instance() or QApplication([])
+    editor = TableEditor("packets.csv")
+    assert {button.text() for button in editor.findChildren(QPushButton)} == {
+        "Добавить строку", "Удалить строки", "Копировать", "Вставить диапазон",
+    }
+    assert editor.model.insertRows(0, 2)
+    editor.model.setData(editor.model.index(0, 1), "FLOW-1")
+    editor.model.setData(editor.model.index(0, 2), "42")
+    editor.view.selectionModel().select(
+        editor.model.index(0, 1), QItemSelectionModel.SelectionFlag.Select,
+    )
+    editor.view.selectionModel().select(
+        editor.model.index(0, 2), QItemSelectionModel.SelectionFlag.Select,
+    )
+    editor.copy()
+    assert QApplication.clipboard().text() == "FLOW-1\t42"
+    editor.view.setCurrentIndex(editor.model.index(1, 1))
+    editor.paste()
+    assert editor.model.rows[1]["flow_id"] == "FLOW-1"
+    assert editor.model.rows[1]["packet_id"] == "42"
+    editor.view.selectRow(1)
+    editor.delete_rows()
+    assert editor.model.rowCount() == 1
+    editor.close()
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_import_preview_shows_original_four_file_composition(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(tmp_path / "import-preview.sqlite3")
+    experiment = read_folder(reference_folder)
+    window.show_import_preview(experiment)
+    assert window.pages.currentWidget() is window.import_preview_page
+    assert window.import_files_table.rowCount() == 4
+    assert window.import_files_table.item(0, 2).text()
+    window.accept_import_preview()
+    assert window.pages.currentWidget() is window.editor_page
+    assert window.dirty and len(window.original_files) == 4
+    window.dirty = False
     window.close()
     window.deleteLater()
     app.processEvents()

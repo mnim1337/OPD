@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import sqlite3
@@ -39,6 +40,38 @@ METRIC_LABELS = {
 }
 CHART_COLORS = [QColor("#2374AB"), QColor("#F18F01"), QColor("#C73E1D"),
                 QColor("#3B8C6E"), QColor("#8055A2"), QColor("#D65DB1"), QColor("#65737E")]
+
+
+class NetworkMark(QWidget):
+    """A small network illustration for the application's start panel."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setMinimumSize(220, 120)
+        self.setMaximumHeight(150)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        points = [
+            QPointF(self.width() * .18, self.height() * .55),
+            QPointF(self.width() * .34, self.height() * .25),
+            QPointF(self.width() * .50, self.height() * .55),
+            QPointF(self.width() * .66, self.height() * .25),
+            QPointF(self.width() * .82, self.height() * .55),
+            QPointF(self.width() * .50, self.height() * .82),
+        ]
+        edges = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (2, 5), (4, 5), (0, 2), (2, 4))
+        painter.setPen(QPen(QColor("#9BB8C8"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for left, right in edges:
+            painter.drawLine(points[left], points[right])
+        for index, point in enumerate(points):
+            color = QColor("#F18F01") if index == 2 else QColor("#2374AB")
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(Qt.GlobalColor.white, 3))
+            painter.drawEllipse(point, 10 if index == 2 else 8, 10 if index == 2 else 8)
+        painter.end()
 
 
 class AssessmentWorker(QThread):
@@ -959,6 +992,52 @@ class JsonTree(QWidget):
         self.changed.emit()
 
 
+class PassportEditor(QWidget):
+    """Passport editor split into local forms while preserving one JSON model."""
+
+    changed = Signal()
+    SECTION_TABS = (
+        ("algorithm", "Алгоритм"),
+        ("environment", "Среда"),
+        ("network", "Сеть"),
+        ("traffic", "Потоки"),
+        ("scenario", "События"),
+        ("measurement", "Измерения"),
+    )
+
+    def __init__(self, value: dict[str, Any]):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Паспорт и условия опыта"))
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        self.forms: dict[str, JsonTree] = {}
+        self.forms["general"] = JsonTree({}, "Общие сведения")
+        self.tabs.addTab(self.forms["general"], "Общие сведения")
+        for key, title in self.SECTION_TABS:
+            self.forms[key] = JsonTree({}, title)
+            self.tabs.addTab(self.forms[key], title)
+        for form in self.forms.values():
+            form.changed.connect(self.changed)
+        self.set_value(value)
+
+    def set_value(self, value: dict[str, Any]) -> None:
+        section_keys = {key for key, _ in self.SECTION_TABS}
+        general = {key: child for key, child in value.items() if key not in section_keys}
+        self.forms["general"].set_value(general)
+        for key, _ in self.SECTION_TABS:
+            self.forms[key].set_value(value.get(key, {}))
+
+    def value(self) -> dict[str, Any]:
+        general = self.forms["general"].value()
+        if not isinstance(general, dict):
+            raise ValueError("Общие сведения паспорта должны быть объектом")
+        result = dict(general)
+        for key, _ in self.SECTION_TABS:
+            result[key] = self.forms[key].value()
+        return result
+
+
 class CsvModel(QAbstractTableModel):
     changed = Signal()
 
@@ -1001,6 +1080,8 @@ class CsvModel(QAbstractTableModel):
         self.endResetModel()
 
     def insertRows(self, row: int, count: int, parent: QModelIndex = QModelIndex()) -> bool:
+        if parent.isValid() or count <= 0 or row < 0 or row > self.rowCount():
+            return False
         self.beginInsertRows(QModelIndex(), row, row + count - 1)
         for _ in range(count):
             self.rows.insert(row, {name: "" for name in self.header})
@@ -1009,6 +1090,8 @@ class CsvModel(QAbstractTableModel):
         return True
 
     def removeRows(self, row: int, count: int, parent: QModelIndex = QModelIndex()) -> bool:
+        if parent.isValid() or count <= 0 or row < 0 or row + count > self.rowCount():
+            return False
         self.beginRemoveRows(QModelIndex(), row, row + count - 1)
         del self.rows[row:row + count]
         self.endRemoveRows()
@@ -1128,6 +1211,7 @@ class MainWindow(QMainWindow):
         self.running_experiment: Experiment | None = None
         self.assessment_panel: AssessmentDialog | None = None
         self.assessment_return_page: QWidget | None = None
+        self.pending_import: Experiment | None = None
         self.setWindowTitle("OPD — подготовка и оценка опыта")
         self.resize(1300, 850)
         central = QWidget()
@@ -1137,6 +1221,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.pages)
         self.start_page = self._navigation_page(
             "OPD", "Комплексная оценка алгоритмов маршрутизации", (("Начать", self.show_main_menu),),
+            extra_widget=NetworkMark(),
         )
         self.main_menu_page = self._navigation_page(
             "Главное меню", "Выберите раздел", (
@@ -1159,6 +1244,15 @@ class MainWindow(QMainWindow):
                 ("Назад", self.show_experiments),
             ),
         )
+        self.import_files_table = QTableWidget(0, 3)
+        self.import_files_table.setHorizontalHeaderLabels(["Файл", "Размер, байт", "SHA-256"])
+        self.import_files_table.horizontalHeader().setStretchLastSection(True)
+        self.import_preview_page = self._navigation_page(
+            "Состав импортированного комплекта", "Проверьте четыре исходных файла перед открытием редактора", (
+                ("Открыть редактор", self.accept_import_preview),
+                ("Назад к способам ввода", self.show_input_choices),
+            ), extra_widget=self.import_files_table,
+        )
         self.saved_results = QComboBox()
         self.results_page = self._navigation_page(
             "Сохранённые результаты", "Оценки открываются без повторного расчёта", (
@@ -1176,7 +1270,7 @@ class MainWindow(QMainWindow):
             ), extra_widget=self.series_complete_summary,
         )
         for page in (self.start_page, self.main_menu_page, self.experiments_page,
-                     self.input_page, self.results_page, self.series_complete_page):
+                     self.input_page, self.import_preview_page, self.results_page, self.series_complete_page):
             self.pages.addWidget(page)
         self.editor_page = QWidget()
         self.pages.addWidget(self.editor_page)
@@ -1202,7 +1296,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.retry_button)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
-        self.passport = JsonTree(empty_passport(), "Паспорт и условия")
+        self.passport = PassportEditor(empty_passport())
         self.tabs.addTab(self.passport, "Паспорт и условия")
         self.tables = {}
         for name, title in (("packets.csv", "Пакеты"), ("routes.csv", "Маршруты"), ("channels.csv", "Каналы")):
@@ -1412,12 +1506,31 @@ class MainWindow(QMainWindow):
         except (DataError, OSError, ValueError) as exc:
             self._error(exc)
             return
+        self.show_import_preview(experiment)
+
+    def show_import_preview(self, experiment: Experiment) -> None:
+        self.pending_import = experiment
+        files = experiment.original_files
+        self.import_files_table.setRowCount(len(files))
+        for row, (name, content) in enumerate(files.items()):
+            for column, value in enumerate((name, str(len(content)), hashlib.sha256(content).hexdigest())):
+                self.import_files_table.setItem(row, column, QTableWidgetItem(value))
+        self.pages.setCurrentWidget(self.import_preview_page)
+
+    def accept_import_preview(self) -> None:
+        experiment = self.pending_import
+        if experiment is None:
+            self.show_input_choices()
+            return
+        self.pending_import = None
         self.draft_id = None
         self._set_experiment(experiment)
-        self.dirty = True  # Import is not yet persisted, but its origin remains "import".
+        self.dirty = True  # The import is not yet persisted.
         self.setWindowModified(True)
         self.show_editor()
-        self.statusBar().showMessage(f"Импортирован {experiment.experiment_id}; исходные файлы будут сохранены с черновиком")
+        self.statusBar().showMessage(
+            f"Импортирован {experiment.experiment_id}; исходные файлы сохранятся с черновиком"
+        )
 
     def open_draft(self) -> None:
         if not self._confirm_leave():

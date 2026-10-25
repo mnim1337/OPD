@@ -72,6 +72,37 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     app.processEvents()
 
 
+def test_radar_does_not_close_an_unknown_axis_through_zero() -> None:
+    app = QApplication.instance() or QApplication([])
+    exact_metrics = {
+        key: {"partial_score": {"status": "exact", "value": "65"}}
+        for key in gui_module.METRIC_LABELS
+    }
+
+    def tinted_polygon_pixels(metrics) -> int:
+        chart = gui_module.RadarChart({"metrics": metrics})
+        chart.resize(380, 360)
+        chart.show()
+        app.processEvents()
+        image = chart.grab().toImage()
+        count = 0
+        for y in range(image.height()):
+            for x in range(image.width()):
+                color = image.pixelColor(x, y)
+                if (210 <= color.red() <= 222 and 224 <= color.green() <= 236
+                        and 233 <= color.blue() <= 246):
+                    count += 1
+        chart.close()
+        chart.deleteLater()
+        app.processEvents()
+        return count
+
+    assert tinted_polygon_pixels(exact_metrics) > 500
+    with_unknown = {key: dict(metric) for key, metric in exact_metrics.items()}
+    with_unknown["P_zad"] = {"partial_score": {"status": "unknown", "value": None}}
+    assert tinted_polygon_pixels(with_unknown) < 100
+
+
 def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     with ZipFile(CONTROL_ARCHIVE) as archive:
@@ -98,9 +129,42 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     ]
     assert dialog.timeline_chart is not None
     assert dialog.radar_chart.grab().width() > 100
+    table = dialog.findChild(QTableWidget)
+    assert table is not None and table.rowCount() == 7
+    assert [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())] == [
+        "Показатель", "Исходное значение", "Единица", "Направление", "Статус",
+        "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение",
+    ]
+    metric_order = ["P_zad", "P_pr", "P_pot", "P_bal", "P_ust", "P_ad", "P_res"]
+    assert list(payload["metrics"]) == metric_order
+    assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+        f"{payload['metrics'][key].get('symbol', key)} ({key})" for key in metric_order
+    ]
+    labels = [label.text() for label in dialog.findChildren(QLabel)]
+    context = labels[0]
+    assert all(part in context for part in ("Алгоритм:", "сеть:", "сценарий:", "повтор:",
+                                             "источник:", "Ω:", "вход v1", "баллов из 100"))
+    assert experiment.experiment_id in context and payload["model_version"] in context
+    assert str(experiment.passport["network"]["network_id"]) in context
+    group_summary = next(label for label in labels if label.startswith("Группы:"))
+    assert len(payload["groups"]) == 4 and group_summary.count(";") == 3
     tabs.setCurrentIndex(2)
     app.processEvents()
     assert dialog.timeline_chart.grab().width() > 100
+    if dialog.flow_filter.count() > 1:
+        flow_id = dialog.flow_filter.itemData(1)
+        dialog.flow_filter.setCurrentIndex(1)
+        assert dialog.timeline_chart.flow_filter == flow_id
+        assert all(kind != "route" or name == flow_id for kind, name, _ in dialog.timeline_chart._rows())
+    if dialog.link_filter.count() > 1:
+        link_id = dialog.link_filter.itemData(1)
+        dialog.link_filter.setCurrentIndex(1)
+        assert dialog.timeline_chart.link_filter == link_id
+        assert all(kind != "channel" or name == link_id for kind, name, _ in dialog.timeline_chart._rows())
+    if dialog.event_zoom.count() > 1:
+        full_interval = dialog.timeline_chart.time_window
+        dialog.event_zoom.setCurrentIndex(1)
+        assert dialog.timeline_chart.time_window != full_interval
     dialog.close()
     dialog.deleteLater()
     app.processEvents()

@@ -11,6 +11,7 @@ from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QTableWidget, QTabWidget
 
 from scanner.core import calculate
+from scanner.core.dispatcher import calculate_and_save
 from scanner.gui import (
     AssessmentDialog, MainWindow, NetworkMark, PassportEditor, SeriesManagerDialog, TableEditor,
 )
@@ -196,6 +197,42 @@ def test_import_preview_shows_original_four_file_composition(
     assert window.pages.currentWidget() is window.editor_page
     assert window.dirty and len(window.original_files) == 4
     window.dirty = False
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_closing_nonempty_series_shows_saved_count_and_result_access(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        profile_name = next(name for name in archive.namelist() if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "series-summary.sqlite3")
+    series_id = window.store.create_series("Серия с оценкой")
+    assessment_id, _, _ = calculate_and_save(window.store, "series-example", experiment, profile)
+    window.store.add_to_series(series_id, assessment_id)
+    window.active_series_id = series_id
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
+    manager = SeriesManagerDialog(window.store, window)
+    manager.series_combo.setCurrentIndex(manager.series_combo.findData(series_id))
+    manager.close_series()
+    assert window.pages.currentWidget() is window.series_complete_page
+    assert "сохранено оценок — 1" in window.series_complete_summary.text()
+
+    results = next(button for button in window.series_complete_page.findChildren(QPushButton)
+                   if button.text() == "Просмотреть результаты")
+    results.click()
+    assert window.pages.currentWidget() is window.results_page
+    assert window.saved_results.count() == 1
+    window.show_series_complete("Серия с оценкой", 1)
+    back = next(button for button in window.series_complete_page.findChildren(QPushButton)
+                if button.text() == "Вернуться к экспериментам")
+    back.click()
+    assert window.pages.currentWidget() is window.experiments_page
     window.close()
     window.deleteLater()
     app.processEvents()

@@ -273,6 +273,71 @@ class ContributionChart(QWidget):
         painter.end()
 
 
+class ComparisonContributionChart(QWidget):
+    """Compare saved integral contributions without inventing interval midpoints."""
+
+    def __init__(self, assessments: list[dict[str, Any]], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.assessments = assessments
+        self.setMinimumHeight(150)
+        self.setMinimumWidth(500)
+
+    @staticmethod
+    def _number(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), Qt.GlobalColor.white)
+        left, right = 150, max(151, self.width() - 35)
+        width = right - left
+        painter.setPen(QPen(QColor("#273444"), 1))
+        painter.drawText(QRectF(left, 4, width, 22), Qt.AlignmentFlag.AlignCenter,
+                         "Состав I(A): семь взвешенных вкладов Kᵢ(A), баллы")
+        for row, assessment in enumerate(self.assessments[:2]):
+            y = 36 + row * 47
+            name = str(assessment.get("experiment_id", f"Опыт {row + 1}"))
+            painter.drawText(QRectF(4, y, left - 10, 24), Qt.AlignmentFlag.AlignLeft,
+                             name[:24])
+            lower_sum = upper_sum = 0.0
+            has_unknown = False
+            for index, key in enumerate(METRIC_LABELS):
+                value = assessment.get("metrics", {}).get(key, {}).get("contribution", {})
+                low = self._number(value.get("lower"))
+                high = self._number(value.get("upper"))
+                if low is None and value.get("status") == "exact":
+                    low = self._number(value.get("value"))
+                    high = low
+                if low is None:
+                    has_unknown = True
+                    continue
+                low = max(0.0, low)
+                high = max(low, high) if high is not None else 100.0
+                start = left + width * min(100, lower_sum) / 100
+                end = left + width * min(100, lower_sum + low) / 100
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(CHART_COLORS[index])
+                painter.drawRect(QRectF(start, y, max(0, end - start), 22))
+                lower_sum += low
+                upper_sum += high
+            if upper_sum > lower_sum:
+                start = left + width * min(100, lower_sum) / 100
+                end = left + width * min(100, upper_sum) / 100
+                painter.setPen(QPen(QColor("#8055A2"), 1))
+                painter.setBrush(QBrush(QColor("#E8DDF0"), Qt.BrushStyle.BDiagPattern))
+                painter.drawRect(QRectF(start, y, max(0, end - start), 22))
+            integral = assessment.get("integral", {})
+            total_text = "I=" + ComparisonDialog._show_value(integral)
+            painter.setPen(QPen(QColor("#273444"), 1))
+            painter.drawText(QRectF(left, y + 23, width, 18), Qt.AlignmentFlag.AlignLeft,
+                             total_text + ("; неизвестные вклады не масштабированы" if has_unknown else ""))
+        painter.end()
+
+
 class TimelineChart(QWidget):
     def __init__(self, experiment: Experiment, parent: QWidget | None = None):
         super().__init__(parent)
@@ -665,6 +730,11 @@ class ComparisonDialog(QDialog):
             f"{first.get('experiment_id')} — I(A): {self._show_value(first.get('integral', {}))}\n"
             f"{second.get('experiment_id')} — I(A): {self._show_value(second.get('integral', {}))}"
         ))
+        self.contribution_chart = ComparisonContributionChart([first, second], self)
+        layout.addWidget(self.contribution_chart)
+        layout.addWidget(QLabel("Цвета соответствуют показателям: " + "; ".join(
+            f"{METRIC_LABELS[key]} ({key})" for key in METRIC_LABELS
+        )))
         metrics = list(first.get("metrics", {}))
         table = QTableWidget(len(metrics), 7)
         table.setHorizontalHeaderLabels(["Показатель", "B₁", "B₂", "K₁", "K₂", "Статус 1", "Статус 2"])

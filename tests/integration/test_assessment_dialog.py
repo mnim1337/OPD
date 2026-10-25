@@ -8,7 +8,8 @@ from zipfile import ZipFile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QPlainTextEdit, QTableWidget, QTabWidget,
 )
@@ -195,6 +196,8 @@ def test_comparison_view_explains_incomparable_conditions_without_ranking() -> N
     assert "SYNTHETIC-A" in message or any("SYNTHETIC-A" in label for label in labels)
     table = incomparable.findChild(QTableWidget)
     assert table is not None and table.rowCount() == 7
+    assert isinstance(incomparable.contribution_chart, gui_module.ComparisonContributionChart)
+    assert any("Pзад (P_zad)" in label.text() for label in incomparable.findChildren(QLabel))
 
     comparable = ComparisonDialog(first, second, [])
     comparable_labels = [label.text() for label in comparable.findChildren(QLabel)]
@@ -203,6 +206,33 @@ def test_comparison_view_explains_incomparable_conditions_without_ranking() -> N
     comparable.close()
     incomparable.deleteLater()
     comparable.deleteLater()
+    app.processEvents()
+
+
+def test_comparison_contribution_chart_keeps_interval_bounds_without_midpoint() -> None:
+    app = QApplication.instance() or QApplication([])
+    metrics = {
+        key: {"contribution": {"status": "exact", "lower": "5", "upper": "5", "value": "5"}}
+        for key in gui_module.METRIC_LABELS
+    }
+    metrics["P_zad"]["contribution"] = {
+        "status": "interval", "lower": "3", "upper": "8", "value": None,
+    }
+    chart = gui_module.ComparisonContributionChart([
+        {"experiment_id": "A", "metrics": metrics,
+         "integral": {"status": "interval", "lower": "33", "upper": "38"}},
+    ])
+    chart.resize(700, 150)
+    image = QImage(chart.size(), QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.white)
+    chart.render(image)
+    assert chart.assessments[0]["metrics"]["P_zad"]["contribution"]["lower"] == "3"
+    assert chart.assessments[0]["metrics"]["P_zad"]["contribution"]["upper"] == "8"
+    colored = sum(1 for x in range(image.width()) for y in range(image.height())
+                  if image.pixelColor(x, y) != Qt.GlobalColor.white)
+    assert colored > 100
+    chart.close()
+    chart.deleteLater()
     app.processEvents()
 
 

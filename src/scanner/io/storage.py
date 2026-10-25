@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,18 @@ class DraftStore:
                     profile_version INTEGER NOT NULL,
                     PRIMARY KEY (draft_id, revision),
                     FOREIGN KEY (draft_id, revision) REFERENCES drafts(draft_id, revision),
+                    FOREIGN KEY (profile_id, profile_version) REFERENCES profiles(profile_id, version)
+                );
+                CREATE TABLE IF NOT EXISTS assessments (
+                    assessment_id TEXT PRIMARY KEY,
+                    draft_id TEXT NOT NULL,
+                    draft_revision INTEGER NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    profile_version INTEGER NOT NULL,
+                    model_version TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    FOREIGN KEY (draft_id, draft_revision) REFERENCES drafts(draft_id, revision),
                     FOREIGN KEY (profile_id, profile_version) REFERENCES profiles(profile_id, version)
                 );
             """)
@@ -125,3 +138,60 @@ class DraftStore:
     def profile_version(self, draft_id: str, revision: int) -> tuple[str, int] | None:
         with self._connect() as db:
             return db.execute("SELECT profile_id, profile_version FROM draft_profiles WHERE draft_id = ? AND revision = ?", (draft_id, revision)).fetchone()
+
+    def save_assessment(self, draft_id: str, revision: int, profile_id: str,
+                        profile_version: int, model_version: str,
+                        payload: dict[str, Any], assessment_id: str | None = None) -> str:
+        """Append an immutable result referring to exact input/profile revisions."""
+        assessment_id = assessment_id or str(uuid.uuid4())
+        payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            linked_profile = db.execute(
+                "SELECT profile_id, profile_version FROM draft_profiles WHERE draft_id = ? AND revision = ?",
+                (draft_id, revision),
+            ).fetchone()
+            if linked_profile != (profile_id, profile_version):
+                raise ValueError("Версия Ω не связана с зафиксированной версией входа")
+            db.execute(
+                "INSERT INTO assessments VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (assessment_id, draft_id, revision, profile_id, profile_version,
+                 model_version, datetime.now(timezone.utc).isoformat(), payload_json),
+            )
+        return assessment_id
+
+    def list_assessments(self) -> list[tuple[str, str, int, str, str]]:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT assessment_id, draft_id, draft_revision, model_version, created_utc "
+                "FROM assessments ORDER BY created_utc DESC"
+            ).fetchall()
+
+    def load_assessment(self, assessment_id: str) -> tuple[dict[str, Any], Experiment, dict[str, Any]]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT assessment_id, draft_id, draft_revision, profile_id, profile_version, payload_json "
+                "FROM assessments WHERE assessment_id = ?", (assessment_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(assessment_id)
+            stored_id, draft_id, revision, profile_id, profile_version, payload_json = row
+            linked = db.execute(
+                "SELECT content_json FROM profiles WHERE profile_id = ? AND version = ?",
+                (profile_id, profile_version),
+            ).fetchone()
+        experiment, _, _ = self.load(draft_id, revision)
+        if linked is None:
+            raise ValueError("Сохранённая версия профиля Ω отсутствует")
+        payload = json.loads(payload_json)
+        payload["assessment_id"] = stored_id
+        return payload, experiment, json.loads(linked[0])
+
+    def backup(self, destination: str | Path) -> None:
+        """Create a consistent SQLite backup while the application is open."""
+        target = Path(destination)
+        if target.resolve() == self.path.resolve():
+            raise ValueError("Файл резервной копии должен отличаться от рабочего хранилища")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as source, sqlite3.connect(target) as backup:
+            source.backup(backup)

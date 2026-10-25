@@ -10,4 +10,4 @@
 - [Исходные контрольные материалы](requirements/source-materials.md) — состав и назначение архивов.
 - [Понимание предметной области](understanding.md) — подтверждённые сведения и открытые вопросы.
 
-Текущая версия `0.2.0` реализует ввод, подготовку данных и расчёт К0–К2 без GUI. [Установка и проверки](docs/development/setup.md) · [Руководство по вводу](docs/user-guide/data-entry.md) · [Расчёт из CLI](docs/user-guide/calculation.md) · [Алгоритм](docs/algorithms/k0-k2.md). Связь расчёта с GUI и Windows `.exe` относятся к следующим этапам; язык — Python, GUI — PySide6/Qt Widgets.
+Текущая версия `0.3.0` реализует ввод, расчёт К0–К2 из GUI и CLI, сохранение и просмотр результатов, экспорт JSON/CSV и резервное копирование. Графики, серии, PDF и восстановление резервной копии остаются в работе этапа 4; Windows `.exe` относится к этапу 6. [Установка и проверки](docs/development/setup.md) · [Руководство по вводу](docs/user-guide/data-entry.md) · [Расчёт и результаты](docs/user-guide/calculation.md) · [Алгоритм](docs/algorithms/k0-k2.md). Язык — Python, GUI — PySide6/Qt Widgets.

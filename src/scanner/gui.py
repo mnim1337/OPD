@@ -1,17 +1,19 @@
-"""Stage-two Qt editor for the complete four-block input and profile Ω."""
+"""Qt application for editing inputs and running saved K0–K2 assessments."""
 
 from __future__ import annotations
 
+import csv
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox,
+    QApplication, QDialog, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox,
     QPushButton, QTableView, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget, QFileDialog,
+    QWidget, QFileDialog, QTableWidget, QTableWidgetItem,
 )
 
 from .io.format import DataError, export_four, from_manual, read_folder
@@ -20,6 +22,127 @@ from .io.profile import validate_profile
 from .io.profile import DIRECTIONS, METRICS
 from .io.storage import DraftStore
 from .io.validation import validate_experiment
+from .core.dispatcher import DispatchError, ResultPersistenceError, calculate_and_save
+
+
+class AssessmentDialog(QDialog):
+    def __init__(self, payload: dict[str, Any], saved: bool, experiment: Experiment | None = None,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self.payload = payload
+        self.setWindowTitle("Результат оценки")
+        self.resize(1050, 600)
+        layout = QVBoxLayout(self)
+        integral = payload.get("integral", {})
+        total = integral.get("value")
+        state = "сохранён" if saved else "рассчитан, но не сохранён"
+        context_lines = [
+            f"Опыт: {payload.get('experiment_id', '')} · Ω: {payload.get('profile_id', '')} "
+            f"v{payload.get('profile_version', '—')} · вход v{payload.get('input_revision', '—')} · "
+            f"модель: {payload.get('model_version', '')}"
+        ]
+        if experiment is not None:
+            passport = experiment.passport
+            algorithm = passport.get("algorithm", {})
+            environment = passport.get("environment", {})
+            context_lines.append(
+                f"Алгоритм: {algorithm.get('name_ru', algorithm.get('algorithm_id', '—'))} "
+                f"{algorithm.get('implementation_version', '')} · сеть: "
+                f"{passport.get('network', {}).get('network_id', '—')} · "
+                f"сценарий: {passport.get('scenario_id', '—')} · повтор: {passport.get('repeat_id', '—')} · "
+                f"источник: {environment.get('execution_source', '—')}"
+            )
+        context_lines.append(
+            f"Итог: {total if total is not None else integral.get('status', 'неизвестно')} баллов из 100 · {state}"
+        )
+        layout.addWidget(QLabel("\n".join(context_lines)))
+        table = QTableWidget(0, 10)
+        table.setHorizontalHeaderLabels(["Показатель", "Исходное значение", "Единица", "Направление",
+                                         "Статус", "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение"])
+        table.horizontalHeader().setStretchLastSection(True)
+        for key, metric in payload.get("metrics", {}).items():
+            row = table.rowCount()
+            table.insertRow(row)
+            raw = metric.get("raw", {})
+            normalized = metric.get("normalized", {})
+            if raw.get("value") is not None:
+                raw_value = raw["value"]
+            elif raw.get("status") == "interval":
+                lower = str(raw.get("lower"))
+                upper = str(raw.get("upper")) if raw.get("upper") is not None else "∞"
+                left = "(" if raw.get("lower_open") else "["
+                right = ")" if raw.get("upper_open") else "]"
+                raw_value = f"{left}{lower}, {upper}{right}"
+            else:
+                raw_value = "—"
+            values = (
+                f"{metric.get('symbol', key)} ({key})",
+                raw_value,
+                raw.get("unit", ""),
+                metric.get("direction", ""),
+                raw.get("status", ""),
+                normalized.get("value") if normalized.get("value") is not None else normalized.get("status", ""),
+                metric.get("partial_score", {}).get("value") or metric.get("partial_score", {}).get("status", ""),
+                metric.get("weight", ""),
+                metric.get("contribution", {}).get("value") or metric.get("contribution", {}).get("status", ""),
+                raw.get("reason") or normalized.get("reason") or "",
+            )
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+        layout.addWidget(table)
+        groups = payload.get("groups", {})
+        group_line = "Группы: " + "; ".join(
+            f"{key} = {value.get('value') if value.get('value') is not None else value.get('status')}"
+            for key, value in groups.items()
+        )
+        layout.addWidget(QLabel(group_line))
+        warnings = payload.get("warnings", [])
+        if warnings:
+            layout.addWidget(QLabel("Предупреждения:\n" + "\n".join(warnings)))
+        exports = QHBoxLayout()
+        for label, callback in (("Сохранить JSON", self.export_json),
+                                ("Сохранить CSV", self.export_csv)):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            exports.addWidget(button)
+        layout.addLayout(exports)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close)
+
+    def export_json(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт результата JSON", "assessment.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(json.dumps(self.payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                                  encoding="utf-8")
+        except (OSError, TypeError, ValueError) as exc:
+            QMessageBox.critical(self, "Ошибка экспорта", str(exc))
+
+    def export_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт показателей CSV", "metrics.csv", "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["metric", "symbol", "direction", "raw_value", "raw_lower", "raw_upper",
+                                 "lower_open", "upper_open", "upper_unbounded", "unit", "status", "reason",
+                                 "normalized", "partial_score", "weight", "contribution"])
+                for key, metric in self.payload.get("metrics", {}).items():
+                    raw = metric.get("raw", {})
+                    writer.writerow([
+                        key, metric.get("symbol", ""), metric.get("direction", ""), raw.get("value"),
+                        raw.get("lower"), raw.get("upper"), raw.get("lower_open"), raw.get("upper_open"),
+                        raw.get("upper_unbounded"), raw.get("unit"), raw.get("status"),
+                        raw.get("reason") or metric.get("normalized", {}).get("reason"),
+                        metric.get("normalized", {}).get("value"),
+                        metric.get("partial_score", {}).get("value"), metric.get("weight"),
+                        metric.get("contribution", {}).get("value"),
+                    ])
+        except OSError as exc:
+            QMessageBox.critical(self, "Ошибка экспорта", str(exc))
 
 
 def _value_type(value: Any) -> str:
@@ -353,7 +476,9 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.source = "manual"
         self.original_files: dict[str, bytes] = {}
-        self.setWindowTitle("OPD — редактор данных опыта")
+        self.unsaved_assessment: ResultPersistenceError | None = None
+        self.retry_button: QPushButton | None = None
+        self.setWindowTitle("OPD — подготовка и оценка опыта")
         self.resize(1300, 850)
         central = QWidget()
         self.setCentralWidget(central)
@@ -362,11 +487,18 @@ class MainWindow(QMainWindow):
         for label, callback in (("Новый", self.new), ("Импорт 4 файлов", self.import_folder),
                                 ("Загрузить Ω", self.import_profile),
                                 ("Открыть черновик", self.open_draft), ("Сохранить черновик", self.save_draft),
-                                ("Проверить данные", self.check), ("Экспорт 4 файлов", self.export)):
+                                ("Проверить данные", self.check), ("Запуск расчёта", self.run_assessment),
+                                ("История результатов", self.open_assessment),
+                                ("Резервная копия", self.backup_store),
+                                ("Экспорт 4 файлов", self.export)):
             button = QPushButton(label)
             button.clicked.connect(callback)
             toolbar.addWidget(button)
         layout.addLayout(toolbar)
+        self.retry_button = QPushButton("Повторить сохранение результата")
+        self.retry_button.setEnabled(False)
+        self.retry_button.clicked.connect(self.retry_assessment_save)
+        layout.addWidget(self.retry_button)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         self.passport = JsonTree(empty_passport(), "Паспорт и условия")
@@ -546,7 +678,118 @@ class MainWindow(QMainWindow):
         except (DataError, OSError, ValueError) as exc:
             self._error(exc)
 
+    def run_assessment(self) -> None:
+        try:
+            experiment, profile = self._experiment()
+            draft_id = self.draft_id or str(experiment.passport.get("experiment_id") or "").strip()
+            if not draft_id:
+                draft_id, ok = QInputDialog.getText(self, "Идентификатор опыта", "Имя записи:")
+                if not ok:
+                    return
+            if not draft_id:
+                raise ValueError("Нужен непустой идентификатор записи")
+            assessment_id, revision, payload = calculate_and_save(
+                self.store, draft_id, experiment, profile,
+            )
+            self.draft_id = draft_id
+            self.dirty = False
+            self.setWindowModified(False)
+            self.unsaved_assessment = None
+            self.retry_button.setEnabled(False)
+            self.statusBar().showMessage(
+                f"Расчёт сохранён: {assessment_id}; вход {draft_id}, версия {revision}"
+            )
+            AssessmentDialog(payload, True, experiment, self).exec()
+        except ResultPersistenceError as exc:
+            self.unsaved_assessment = exc
+            self.retry_button.setEnabled(True)
+            self.statusBar().showMessage("Расчёт выполнен, результат не сохранён")
+            answer = QMessageBox.critical(
+                self, "Результат не сохранён",
+                str(exc) + "\nРасчёт уже выполнен; можно повторить только сохранение.",
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close,
+            )
+            if answer == QMessageBox.StandardButton.Retry:
+                self.retry_assessment_save()
+            else:
+                AssessmentDialog(exc.payload, False, experiment, self).exec()
+        except (DataError, DispatchError, OSError, ValueError, sqlite3.Error) as exc:
+            self._error(exc)
+
+    def retry_assessment_save(self) -> None:
+        pending = self.unsaved_assessment
+        if pending is None:
+            return
+        try:
+            assessment_id = self.store.save_assessment(
+                pending.draft_id, pending.revision, pending.profile_id,
+                pending.profile_version, pending.model_version, pending.payload,
+                pending.assessment_id,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Ошибка сохранения", f"Результат пока не сохранён: {exc}")
+            return
+        self.unsaved_assessment = None
+        self.retry_button.setEnabled(False)
+        self.statusBar().showMessage(f"Результат сохранён: {assessment_id}")
+        _, experiment, _ = self.store.load_assessment(assessment_id)
+        AssessmentDialog(pending.payload, True, experiment, self).exec()
+
+    def open_assessment(self) -> None:
+        try:
+            entries = self.store.list_assessments()
+        except sqlite3.Error as exc:
+            self._error(exc)
+            return
+        if not entries:
+            QMessageBox.information(self, "История результатов", "Сохранённых результатов пока нет")
+            return
+        labels = [f"{draft_id}, версия {revision} — {model}, {stamp}"
+                  for _, draft_id, revision, model, stamp in entries]
+        label, ok = QInputDialog.getItem(self, "История результатов", "Выберите сохранённую оценку:",
+                                         labels, 0, False)
+        if not ok:
+            return
+        assessment_id = entries[labels.index(label)][0]
+        try:
+            payload, experiment, _ = self.store.load_assessment(assessment_id)
+        except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            self._error(exc)
+            return
+        self.statusBar().showMessage(f"Открыт сохранённый результат {assessment_id}; повторного расчёта не было")
+        AssessmentDialog(payload, True, experiment, self).exec()
+
+    def backup_store(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Резервная копия хранилища", "opd-backup.sqlite3",
+                                              "SQLite (*.sqlite3)")
+        if not path:
+            return
+        try:
+            self.store.backup(path)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            self._error(exc)
+            return
+        self.statusBar().showMessage(f"Резервная копия записана: {path}")
+
     def closeEvent(self, event) -> None:
+        if self.unsaved_assessment is not None:
+            choice = QMessageBox.question(
+                self, "Несохранённый результат",
+                "Результат расчёта ещё не сохранён. Повторить сохранение перед выходом?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if choice == QMessageBox.StandardButton.Save:
+                self.retry_assessment_save()
+                if self.unsaved_assessment is not None:
+                    event.ignore()
+                    return
+            else:
+                self.unsaved_assessment = None
+                self.retry_button.setEnabled(False)
         if self._confirm_leave():
             event.accept()
         else:

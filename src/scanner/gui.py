@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -16,7 +17,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPlainTextEdit, QScrollArea,
     QPushButton, QProgressDialog, QTableView, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget, QFileDialog, QTableWidget, QTableWidgetItem, QStackedWidget,
@@ -57,6 +58,8 @@ QLabel#heroEyebrow { color: #9dbbd9; font-size: 12px; font-weight: 700; }
 QLabel#cardTitle { color: #203650; font-size: 19px; font-weight: 700; }
 QLabel#cardDescription { color: #71879f; font-size: 14px; }
 QLabel#scoreValue { color: #2d62c6; font-size: 36px; font-weight: 700; }
+QLabel#fieldLabel { color: #71879f; font-size: 12px; }
+QLabel#fieldKey { color: #9aacc0; font-size: 10px; }
 QLabel#infoNote { background: #e7effb; color: #2d62c6; border-radius: 8px;
                   padding: 13px 16px; font-size: 13px; }
 QFrame#contentCard { background: #ffffff; border: 1px solid #d9e4f2; border-radius: 12px; }
@@ -1156,50 +1159,438 @@ class JsonTree(QWidget):
         self.changed.emit()
 
 
+PASSPORT_LABELS = {
+    "experiment_id": "Идентификатор опыта", "scenario_id": "Сценарий",
+    "repeat_id": "Номер повтора", "description_ru": "Описание",
+    "data_origin": "Источник данных", "algorithm_id": "Алгоритм",
+    "name_ru": "Наименование реализации", "implementation_version": "Версия",
+    "routing_mode": "Режим маршрутизации", "implementation_sha256": "SHA-256 реализации",
+    "settings": "Настройки алгоритма", "settings_completeness": "Полнота настроек",
+    "note_ru": "Примечание", "execution_source": "Источник исполнения",
+    "pak_version": "Версия ПАК", "time_mode": "Режим времени",
+    "hardware_description": "Оборудование", "queue_discipline": "Дисциплина очереди",
+    "buffer_limit_bytes": "Буфер, байт", "link_errors": "Ошибки каналов",
+    "randomness": "Случайность", "used": "Используется",
+    "network_id": "Идентификатор сети", "directed": "Направленные каналы",
+    "orbital_description": "Описание орбитальной конфигурации",
+    "node_id": "Узел", "node_type": "Тип узла", "plane_id": "Плоскость",
+    "initial_up": "Начальная доступность", "link_id": "Канал",
+    "node_from": "От узла", "node_to": "К узлу",
+    "interface_from": "Исходящий интерфейс", "interface_to": "Входящий интерфейс",
+    "link_type": "Тип соединения", "initial_capacity_bps": "Скорость, бит/с",
+    "initial_propagation_delay_s": "Задержка, с", "initial_routing_cost": "Стоимость",
+    "resource_allocation": "Выделение ресурса", "flow_id": "Поток",
+    "source_node": "Узел отправителя", "destination_node": "Узел получателя",
+    "transport": "Транспорт", "packetization": "Пакетизация",
+    "generation": "Генерация потока", "payload_bytes": "Полезная нагрузка, байт",
+    "network_header_bytes": "Заголовок, байт", "fragmentation": "Фрагментация",
+    "transport_retransmission": "Повторы транспорта", "duplication": "Дублирование",
+    "start_s": "Начало, с", "interval_s": "Интервал, с",
+    "packet_count": "Число пакетов", "stop_s": "Конец, с",
+    "nominal_payload_rate_bps": "Скорость полезной нагрузки, бит/с",
+    "event_id": "Событие", "event_type": "Тип события",
+    "object_type": "Тип объекта", "object_ids": "Объекты события",
+    "scheduled_time_s": "Запланировано, с", "actual_time_s": "Фактически, с",
+    "result": "Результат", "changes": "Изменения",
+    "capture_start_s": "Начало регистрации, с", "capture_end_s": "Конец регистрации, с",
+    "evaluation_start_s": "Начало оценки, с", "evaluation_end_s": "Конец оценки, с",
+    "packet_cohort": "Совокупность пакетов", "delay_definition": "Определение задержки",
+    "loss_timeout_s": "Порог потери, с", "goodput_definition": "Полезная скорость",
+    "time_base": "Шкала времени", "time_origin": "Начало отсчёта",
+    "timestamp_resolution_s": "Разрешение меток, с", "clock_error_bound_s": "Погрешность часов, с",
+    "route_observation_mode": "Наблюдение маршрутов",
+    "route_time_error_bound_s": "Погрешность маршрутов, с",
+    "channel_nominal_interval_s": "Интервал каналов, с",
+    "channel_counter_mode": "Режим счётчиков",
+    "channel_categories_disjoint": "Категории не пересекаются",
+    "channel_max_atomic_packet_bytes": "Максимальный пакет, байт",
+    "balance": "Балансировка", "stability": "Устойчивость",
+    "adaptivity": "Адаптивность", "checks": "Проверки",
+    "selected_link_ids": "Выбранные каналы", "time_start_s": "Начало проверки, с",
+    "horizon_s": "Горизонт, с", "confirmation_window_s": "Подтверждение, с",
+    "format_name": "Формат", "schema_version": "Версия схемы",
+    "file_contract": "Контракт файлов", "export_status": "Полнота выгрузки",
+    "complete": "Комплект завершён", "data_logging_complete": "Регистрация полная",
+    "lost_log_records": "Потерянные записи", "logging_gaps": "Пробелы регистрации",
+    "extensions": "Дополнительные поля",
+}
+
+PASSPORT_ARRAY_COLUMNS = {
+    "network.nodes": ("node_id", "node_type", "plane_id", "initial_up"),
+    "network.links": ("link_id", "node_from", "node_to", "initial_capacity_bps"),
+    "traffic.flows": ("flow_id", "source_node", "destination_node", "transport"),
+    "scenario.events": ("event_id", "event_type", "actual_time_s", "result"),
+    "measurement.stability.checks": ("check_id", "flow_id", "time_start_s", "horizon_s"),
+    "measurement.adaptivity.checks": ("check_id", "flow_id", "event_id"),
+}
+
+
 class PassportEditor(QWidget):
-    """Passport editor split into local forms while preserving one JSON model."""
+    """Nine passport forms backed by one lossless JSON value."""
 
     changed = Signal()
     SECTION_TABS = (
-        ("algorithm", "Алгоритм"),
-        ("environment", "Среда"),
-        ("network", "Сеть"),
-        ("traffic", "Потоки"),
-        ("scenario", "События"),
-        ("measurement", "Измерения"),
+        ("Общие сведения", "Паспорт: общие сведения и алгоритм"),
+        ("Среда", "Паспорт: источник и среда выполнения"),
+        ("Узлы", "Паспорт: узлы сети"),
+        ("Соединения", "Паспорт: направленные соединения"),
+        ("Потоки", "Паспорт: потоки и нагрузка"),
+        ("События", "Паспорт: события сценария"),
+        ("Наблюдение", "Паспорт: условия наблюдения"),
+        ("Проверки", "Паспорт: устойчивость и адаптивность"),
+        ("Полнота", "Паспорт: полнота регистрации и формат"),
     )
 
     def __init__(self, value: dict[str, Any]):
         super().__init__()
+        self._data: dict[str, Any] = {}
+        self._invalid_fields: set[tuple[str | int, ...]] = set()
+        self._array_tables: dict[tuple[str, ...], QTableWidget] = {}
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Паспорт и условия опыта"))
+        layout.setContentsMargins(12, 10, 12, 10)
+        header = QHBoxLayout()
+        self.section_heading = QLabel()
+        self.section_heading.setObjectName("cardTitle")
+        header.addWidget(self.section_heading)
+        header.addStretch()
+        advanced = QPushButton("Расширенный ввод JSON")
+        advanced.clicked.connect(self.open_advanced_editor)
+        header.addWidget(advanced)
+        layout.addLayout(header)
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self._update_heading)
         layout.addWidget(self.tabs)
-        self.forms: dict[str, JsonTree] = {}
-        self.forms["general"] = JsonTree({}, "Общие сведения")
-        self.tabs.addTab(self.forms["general"], "Общие сведения")
-        for key, title in self.SECTION_TABS:
-            self.forms[key] = JsonTree({}, title)
-            self.tabs.addTab(self.forms[key], title)
-        for form in self.forms.values():
-            form.changed.connect(self.changed)
         self.set_value(value)
 
+    def _get(self, path: tuple[str | int, ...]) -> Any:
+        node: Any = self._data
+        for key in path:
+            if isinstance(node, dict):
+                node = node.get(key)
+            elif isinstance(node, list) and isinstance(key, int) and key < len(node):
+                node = node[key]
+            else:
+                return None
+        return node
+
+    def _assign(self, path: tuple[str | int, ...], value: Any) -> None:
+        node: Any = self._data
+        for key in path[:-1]:
+            if isinstance(node, dict):
+                node = node.setdefault(key, {})
+            else:
+                node = node[key]
+        previous = node.get(path[-1]) if isinstance(node, dict) else node[path[-1]]
+        if previous != value:
+            node[path[-1]] = value
+            for array_path, table in self._array_tables.items():
+                if path[:len(array_path)] == array_path and len(path) > len(array_path):
+                    row = path[len(array_path)]
+                    if isinstance(row, int) and 0 <= row < table.rowCount():
+                        columns = PASSPORT_ARRAY_COLUMNS[".".join(array_path)]
+                        if path[-1] in columns:
+                            column = columns.index(path[-1])
+                            table.setItem(row, column, QTableWidgetItem("—" if value is None else str(value)))
+            self.changed.emit()
+
+    @staticmethod
+    def _label(key: str) -> str:
+        return PASSPORT_LABELS.get(key, key.replace("_", " ").capitalize())
+
+    @staticmethod
+    def _kind(key: str, value: Any) -> str:
+        if isinstance(value, bool) or key in {"directed", "initial_up", "used", "complete",
+                                                   "data_logging_complete", "channel_categories_disjoint"}:
+            return "boolean"
+        if isinstance(value, int) or key.endswith(("_count", "_index")) or key in {"repeat_id", "plane_id"}:
+            return "integer"
+        if isinstance(value, float) or key.endswith(("_s", "_bps", "_bytes")):
+            return "number"
+        if isinstance(value, list):
+            return "array"
+        return "string"
+
+    def _field(self, key: str, value: Any, path: tuple[str | int, ...]) -> QWidget:
+        cell = QWidget()
+        cell_layout = QVBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.setSpacing(3)
+        caption = QLabel(self._label(key))
+        caption.setObjectName("fieldLabel")
+        cell_layout.addWidget(caption)
+        kind = self._kind(key, value)
+        if kind == "boolean":
+            control = QComboBox()
+            control.addItems(["Не задано", "Да", "Нет"])
+            control.setCurrentIndex(0 if value is None else 1 if value else 2)
+            control.currentIndexChanged.connect(
+                lambda index, p=path: self._assign(p, None if index == 0 else index == 1))
+        elif kind == "string" and (key.endswith("_ru") or len(str(value or "")) > 110):
+            control = QPlainTextEdit(str(value or ""))
+            control.setFixedHeight(72)
+            control.textChanged.connect(lambda w=control, p=path: self._assign(p, w.toPlainText()))
+        else:
+            control = QLineEdit()
+            control.setText(json.dumps(value, ensure_ascii=False) if kind == "array" else
+                            "" if value is None else str(value))
+            control.setPlaceholderText("Не задано" if value is None else "")
+            def update(text: str, p=path, k=kind, w=control) -> None:
+                try:
+                    if k == "integer":
+                        parsed = int(text) if text.strip() else None
+                    elif k == "number":
+                        parsed = float(text.replace(",", ".")) if text.strip() else None
+                        if parsed is not None and not math.isfinite(parsed):
+                            raise ValueError("Число должно быть конечным")
+                    elif k == "array":
+                        parsed = json.loads(text) if text.strip() else []
+                        if not isinstance(parsed, list):
+                            raise ValueError("Ожидается JSON-массив")
+                    else:
+                        parsed = text if text or self._get(p) is not None else None
+                except (ValueError, TypeError):
+                    self._invalid_fields.add(p)
+                    w.setStyleSheet("border: 1px solid #c94343;")
+                    w.setToolTip("Проверьте тип и значение поля")
+                    return
+                self._invalid_fields.discard(p)
+                w.setStyleSheet("")
+                w.setToolTip("")
+                self._assign(p, parsed)
+            control.textChanged.connect(update)
+        control.setObjectName("passport." + ".".join(map(str, path)))
+        cell_layout.addWidget(control)
+        technical = QLabel(".".join(map(str, path)))
+        technical.setObjectName("fieldKey")
+        cell_layout.addWidget(technical)
+        return cell
+
+    def _fields(self, layout: QVBoxLayout, node: dict[str, Any], path: tuple[str | int, ...],
+                keys: tuple[str, ...] | None = None) -> None:
+        selected = [(key, node[key]) for key in (keys or tuple(node)) if key in node]
+        scalars = [(key, value) for key, value in selected if not isinstance(value, dict)]
+        if scalars:
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(16)
+            grid.setVerticalSpacing(12)
+            for index, (key, value) in enumerate(scalars):
+                grid.addWidget(self._field(key, value, path + (key,)), index // 2, index % 2)
+            layout.addLayout(grid)
+        for key, value in selected:
+            if isinstance(value, dict):
+                heading = QLabel(self._label(key))
+                heading.setObjectName("cardTitle")
+                layout.addWidget(heading)
+                self._fields(layout, value, path + (key,))
+
+    def _card(self, parent: QVBoxLayout, title: str, node: dict[str, Any] | None,
+              path: tuple[str | int, ...], keys: tuple[str, ...] | None = None) -> None:
+        card = QFrame()
+        card.setObjectName("contentCard")
+        content = QVBoxLayout(card)
+        content.setContentsMargins(22, 18, 22, 18)
+        heading = QLabel(title)
+        heading.setObjectName("cardTitle")
+        content.addWidget(heading)
+        if isinstance(node, dict) and node:
+            self._fields(content, node, path, keys)
+        else:
+            content.addWidget(QLabel("Поля пока не заданы. Их можно добавить в расширенном вводе."))
+        parent.addWidget(card)
+
+    def _array_card(self, parent: QVBoxLayout, title: str, path: tuple[str, ...]) -> None:
+        array = self._get(path)
+        if not isinstance(array, list):
+            array = []
+        path_name = ".".join(path)
+        columns = PASSPORT_ARRAY_COLUMNS[path_name]
+        card = QFrame()
+        card.setObjectName("contentCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(22, 18, 22, 18)
+        heading = QLabel()
+        heading.setObjectName("cardTitle")
+        card_layout.addWidget(heading)
+        row = QHBoxLayout()
+        table = QTableWidget(0, len(columns))
+        table.setHorizontalHeaderLabels([self._label(key) for key in columns])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setMinimumHeight(260)
+        self._array_tables[path] = table
+        row.addWidget(table, 3)
+        detail = QFrame()
+        detail.setObjectName("contentCard")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(16, 12, 16, 12)
+        row.addWidget(detail, 2)
+        card_layout.addLayout(row)
+
+        def show_detail() -> None:
+            while detail_layout.count():
+                child = detail_layout.takeAt(0)
+                if child.widget() is not None:
+                    child.widget().deleteLater()
+                elif child.layout() is not None:
+                    child.layout().deleteLater()
+            selected = table.currentRow()
+            if 0 <= selected < len(array) and isinstance(array[selected], dict):
+                label = QLabel(f"Запись {selected + 1}")
+                label.setObjectName("cardTitle")
+                detail_layout.addWidget(label)
+                scroller = QScrollArea()
+                scroller.setWidgetResizable(True)
+                form = QWidget()
+                form_layout = QVBoxLayout(form)
+                self._fields(form_layout, array[selected], path + (selected,))
+                form_layout.addStretch()
+                scroller.setWidget(form)
+                detail_layout.addWidget(scroller)
+            else:
+                detail_layout.addWidget(QLabel("Выберите запись или добавьте новую."))
+
+        def refresh(selected: int = 0) -> None:
+            heading.setText(f"{title} — записей: {len(array)}")
+            table.setRowCount(len(array))
+            for index, item in enumerate(array):
+                for column, key in enumerate(columns):
+                    value = item.get(key) if isinstance(item, dict) else None
+                    table.setItem(index, column, QTableWidgetItem("—" if value is None else str(value)))
+            if array:
+                table.selectRow(min(selected, len(array) - 1))
+            show_detail()
+
+        table.itemSelectionChanged.connect(show_detail)
+        actions = QHBoxLayout()
+        add = QPushButton("Добавить запись")
+        duplicate = QPushButton("Копировать запись")
+        delete = QPushButton("Удалить запись")
+        def add_item() -> None:
+            template = ARRAY_TEMPLATES.get(path_name, {})
+            if self._get(path) is None:
+                self._assign(path, array)
+            array.append(deepcopy(template))
+            refresh(len(array) - 1)
+            self.changed.emit()
+        def duplicate_item() -> None:
+            index = table.currentRow()
+            if 0 <= index < len(array):
+                array.insert(index + 1, deepcopy(array[index]))
+                refresh(index + 1)
+                self.changed.emit()
+        def delete_item() -> None:
+            index = table.currentRow()
+            if 0 <= index < len(array):
+                del array[index]
+                refresh(min(index, len(array) - 1))
+                self.changed.emit()
+        add.clicked.connect(add_item)
+        duplicate.clicked.connect(duplicate_item)
+        delete.clicked.connect(delete_item)
+        for button in (add, duplicate, delete):
+            actions.addWidget(button)
+        card_layout.addLayout(actions)
+        parent.addWidget(card)
+        refresh()
+
+    def _section(self, index: int) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(12)
+        if index == 0:
+            cards = QHBoxLayout()
+            self._card(cards, "Описание эксперимента", self._data, (),
+                       ("experiment_id", "repeat_id", "scenario_id", "description_ru", "data_origin"))
+            self._card(cards, "Исследуемая реализация", self._get(("algorithm",)), ("algorithm",))
+            layout.addLayout(cards)
+        elif index == 1:
+            self._card(layout, "Среда выполнения и источник", self._get(("environment",)), ("environment",))
+        elif index == 2:
+            self._card(layout, "Сеть", self._get(("network",)), ("network",),
+                       ("network_id", "directed", "orbital_description"))
+            self._array_card(layout, "Узлы сети", ("network", "nodes"))
+        elif index == 3:
+            self._array_card(layout, "Направленные соединения", ("network", "links"))
+        elif index == 4:
+            self._array_card(layout, "Потоки и пакетизация", ("traffic", "flows"))
+        elif index == 5:
+            self._array_card(layout, "События сценария", ("scenario", "events"))
+        elif index == 6:
+            measurement = self._get(("measurement",))
+            keys = tuple(key for key in measurement if key not in {"balance", "stability", "adaptivity"}) if isinstance(measurement, dict) else ()
+            self._card(layout, "Условия и полнота наблюдения", measurement, ("measurement",), keys)
+        elif index == 7:
+            for key in ("balance", "stability", "adaptivity"):
+                self._card(layout, self._label(key), self._get(("measurement", key)), ("measurement", key),
+                           tuple(k for k in (self._get(("measurement", key)) or {}) if k != "checks"))
+            self._array_card(layout, "Проверки устойчивости", ("measurement", "stability", "checks"))
+            self._array_card(layout, "Проверки адаптивности", ("measurement", "adaptivity", "checks"))
+        else:
+            self._card(layout, "Версия формата", self._data, (), ("format_name", "schema_version"))
+            self._card(layout, "Полнота регистрации", self._get(("export_status",)), ("export_status",))
+            self._card(layout, "Контракт четырёх файлов", self._get(("file_contract",)), ("file_contract",))
+            self._card(layout, "Дополнительные поля паспорта", self._get(("extensions",)), ("extensions",))
+        layout.addStretch()
+        scroll.setWidget(content)
+        return scroll
+
+    def _update_heading(self, index: int) -> None:
+        if 0 <= index < len(self.SECTION_TABS):
+            self.section_heading.setText(self.SECTION_TABS[index][1])
+
     def set_value(self, value: dict[str, Any]) -> None:
-        section_keys = {key for key, _ in self.SECTION_TABS}
-        general = {key: child for key, child in value.items() if key not in section_keys}
-        self.forms["general"].set_value(general)
-        for key, _ in self.SECTION_TABS:
-            self.forms[key].set_value(value.get(key, {}))
+        if not isinstance(value, dict):
+            raise ValueError("Паспорт должен быть объектом")
+        self._data = deepcopy(value)
+        self._invalid_fields.clear()
+        self._array_tables.clear()
+        selected = max(self.tabs.currentIndex(), 0)
+        self.tabs.blockSignals(True)
+        while self.tabs.count():
+            widget = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            widget.deleteLater()
+        for index, (label, _) in enumerate(self.SECTION_TABS):
+            self.tabs.addTab(self._section(index), label)
+        self.tabs.setCurrentIndex(min(selected, self.tabs.count() - 1))
+        self.tabs.blockSignals(False)
+        self._update_heading(self.tabs.currentIndex())
 
     def value(self) -> dict[str, Any]:
-        general = self.forms["general"].value()
-        if not isinstance(general, dict):
-            raise ValueError("Общие сведения паспорта должны быть объектом")
-        result = dict(general)
-        for key, _ in self.SECTION_TABS:
-            result[key] = self.forms[key].value()
-        return result
+        if self._invalid_fields:
+            path = ".".join(map(str, sorted(self._invalid_fields, key=str)[0]))
+            raise ValueError(f"Исправьте значение поля паспорта: {path}")
+        return deepcopy(self._data)
+
+    def open_advanced_editor(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Расширенный ввод паспорта")
+        dialog.resize(950, 680)
+        layout = QVBoxLayout(dialog)
+        editor = JsonTree(self.value(), "Полный паспорт")
+        layout.addWidget(editor)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                   QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(buttons)
+        buttons.rejected.connect(dialog.reject)
+        def accept() -> None:
+            try:
+                data = editor.value()
+                if not isinstance(data, dict):
+                    raise ValueError("Паспорт должен быть объектом")
+            except (ValueError, TypeError) as exc:
+                QMessageBox.warning(dialog, "Ошибка паспорта", str(exc))
+                return
+            self.set_value(data)
+            self.changed.emit()
+            dialog.accept()
+        buttons.accepted.connect(accept)
+        dialog.exec()
 
 
 class CsvModel(QAbstractTableModel):

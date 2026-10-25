@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import time
+import pytest
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -11,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QPlainTextEdit, QTableWidget, QTabWidget,
+    QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QTableWidget, QTabWidget,
 )
 
 from scanner.core import calculate
@@ -332,7 +333,40 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     app = QApplication.instance() or QApplication([])
     original = read_folder(reference_folder).passport
     editor = PassportEditor(original)
-    assert editor.tabs.count() == 7
+    assert [editor.tabs.tabText(index) for index in range(editor.tabs.count())] == [
+        "Общие сведения", "Среда", "Узлы", "Соединения", "Потоки", "События",
+        "Наблюдение", "Проверки", "Полнота",
+    ]
+    assert editor.value() == original
+    experiment_id = editor.findChild(QLineEdit, "passport.experiment_id")
+    assert experiment_id is not None
+    experiment_id.setText("NEW_EXPERIMENT")
+    assert editor.value()["experiment_id"] == "NEW_EXPERIMENT"
+    assert original["experiment_id"] != "NEW_EXPERIMENT"
+    editor.tabs.setCurrentIndex(2)
+    node_id = editor.findChild(QLineEdit, "passport.network.nodes.0.node_id")
+    assert node_id is not None
+    node_id.setText("RENAMED_NODE")
+    assert editor.value()["network"]["nodes"][0]["node_id"] == "RENAMED_NODE"
+    nodes = editor.tabs.widget(2).findChild(QTableWidget)
+    assert nodes.item(0, 0).text() == "RENAMED_NODE"
+    numeric = editor.findChild(QLineEdit, "passport.network.nodes.0.plane_id")
+    assert numeric is not None
+    numeric.setText("ошибка")
+    with pytest.raises(ValueError, match="network.nodes.0.plane_id"):
+        editor.value()
+    numeric.setText("2")
+    assert editor.value()["network"]["nodes"][0]["plane_id"] == 2
+    add = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
+               if button.text() == "Добавить запись")
+    delete = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
+                  if button.text() == "Удалить запись")
+    count = len(editor.value()["network"]["nodes"])
+    add.click()
+    assert len(editor.value()["network"]["nodes"]) == count + 1
+    delete.click()
+    assert len(editor.value()["network"]["nodes"]) == count
+    editor.set_value(original)
     assert editor.value() == original
     editor.deleteLater()
     app.processEvents()

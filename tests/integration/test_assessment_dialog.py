@@ -69,10 +69,11 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     table = dialog.findChild(QTableWidget)
     assert table is not None
     assert table.rowCount() == 3
-    assert table.item(0, 1).text() == "—"
-    assert table.item(0, 4).text() == "unknown"
+    assert table.item(0, 1).text() == "не определено"
+    assert table.item(0, 4).text() == "не определено"
     assert table.item(1, 1).text() == "(1, ∞)"
-    assert table.item(2, 4).text() == "not_applicable"
+    assert table.item(2, 4).text() == "неприменимо"
+    assert any(label.text() == "не определено" for label in dialog.findChildren(QLabel))
     dialog.close()
     dialog.deleteLater()
     app.processEvents()
@@ -126,6 +127,9 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     payload = calculate(experiment, profile).as_dict()
     payload.update({"input_revision": 1, "profile_version": 1, "assessment_id": "test"})
     payload["profile"] = profile
+    metric_order = ["P_zad", "P_pr", "P_pot", "P_bal", "P_ust", "P_ad", "P_res"]
+    assert list(payload["metrics"]) == metric_order
+    payload["metrics"] = dict(reversed(list(payload["metrics"].items())))
     dialog = AssessmentDialog(payload, True, experiment)
     dialog.show()
     app.processEvents()
@@ -141,8 +145,6 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
         "Показатель", "Исходное значение", "Единица", "Направление", "Статус",
         "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение",
     ]
-    metric_order = ["P_zad", "P_pr", "P_pot", "P_bal", "P_ust", "P_ad", "P_res"]
-    assert list(payload["metrics"]) == metric_order
     assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
         f"{payload['metrics'][key].get('symbol', key)} ({key})" for key in metric_order
     ]
@@ -285,6 +287,10 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert {button.text() for button in window.editor_page.findChildren(QPushButton)}.issuperset({
         "Назад", "Сохранить черновик", "Проверить данные", "Запуск расчёта",
     })
+    assert window.editor_heading.text() == "Паспорт: общие сведения и алгоритм"
+    window.passport.tabs.setCurrentIndex(2)
+    assert window.editor_heading.text() == "Паспорт: узлы сети"
+    window.passport.tabs.setCurrentIndex(0)
 
     def click(page, label: str) -> None:
         button = next(button for button in page.findChildren(QPushButton) if button.text() == label)
@@ -674,6 +680,15 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
     assert window.pages.currentWidget() is window.results_page
     assert window.saved_results.count() == 1
     assert window.results_table.rowCount() == 1
+    assert [window.results_table.horizontalHeaderItem(column).text()
+            for column in range(window.results_table.columnCount())] == [
+        "Опыт", "Алгоритм", "Сценарий", "Повтор", "Модель", "Состояние", "I(A)", "Сохранено",
+    ]
+    assert window.results_model.count() == 2
+    assert window.results_state.count() == 2
+    window.results_model.setCurrentIndex(1)
+    assert not window.results_table.isRowHidden(0)
+    window.results_model.setCurrentIndex(0)
     window.results_search.setText("несуществующий опыт")
     assert window.results_table.isRowHidden(0)
     assert window.saved_results.currentData() is None

@@ -15,11 +15,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF, QRadialGradient
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPlainTextEdit, QScrollArea,
-    QPushButton, QProgressDialog, QTableView, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QPlainTextEdit, QScrollArea, QSizePolicy,
+    QPushButton, QProgressDialog, QTableView, QTabWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget, QFileDialog, QTableWidget, QTableWidgetItem, QStackedWidget,
 )
 
@@ -70,10 +70,15 @@ QPushButton:hover { border-color: #2d62c6; background: #f3f7ff; }
 QPushButton:disabled { color: #9bacc0; background: #f3f6fa; }
 QPushButton[variant="primary"] { background: #2d62c6; color: #ffffff; border-color: #2d62c6; }
 QPushButton[variant="primary"]:hover { background: #2257b9; }
-QTabWidget::pane { border: 1px solid #d9e4f2; background: #ffffff; border-radius: 8px; }
+QTabWidget::pane { border: 0; background: transparent; }
 QTabBar::tab { background: #ffffff; color: #71879f; border: 1px solid #d9e4f2;
                padding: 9px 18px; margin-right: 3px; border-radius: 6px; }
 QTabBar::tab:selected { background: #2d62c6; color: #ffffff; border-color: #2d62c6; }
+QToolButton#utilityMenu { color: #ffffff; background: #244462; border: 1px solid #42617d;
+                          border-radius: 6px; padding: 6px 12px; font-weight: 600; }
+QToolButton#utilityMenu:hover { background: #315576; }
+QLineEdit { background: #ffffff; color: #203650; border: 1px solid #d9e4f2;
+            border-radius: 6px; padding: 6px 9px; min-height: 24px; }
 QTableView, QTableWidget, QTreeWidget, QComboBox, QPlainTextEdit {
     background: #ffffff; color: #203650; border: 1px solid #d9e4f2; border-radius: 6px;
     selection-background-color: #e6efff; selection-color: #203650;
@@ -86,7 +91,7 @@ QStatusBar { background: #f1f5fb; color: #71879f; }
 
 
 class NetworkMark(QWidget):
-    """A small network illustration for the application's start panel."""
+    """Orbital illustration for the opening panel in appendix V."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -97,32 +102,37 @@ class NetworkMark(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
-        points = [
-            QPointF(self.width() * .18, self.height() * .55),
-            QPointF(self.width() * .34, self.height() * .25),
-            QPointF(self.width() * .50, self.height() * .55),
-            QPointF(self.width() * .66, self.height() * .25),
-            QPointF(self.width() * .82, self.height() * .55),
-            QPointF(self.width() * .50, self.height() * .82),
-        ]
-        edges = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (2, 5), (4, 5), (0, 2), (2, 4))
-        painter.setPen(QPen(QColor("#9BB8C8"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        for left, right in edges:
-            painter.drawLine(points[left], points[right])
-        for index, point in enumerate(points):
-            color = QColor("#F18F01") if index == 2 else QColor("#2374AB")
-            painter.setBrush(QBrush(color))
-            painter.setPen(QPen(Qt.GlobalColor.white, 3))
-            painter.drawEllipse(point, 10 if index == 2 else 8, 10 if index == 2 else 8)
-        painter.setPen(QPen(QColor("#4779a8"), 1))
-        center = QPointF(self.width() * .5, self.height() * .52)
-        for angle in (0, 50, -50):
+        width, height = self.width(), self.height()
+        center = QPointF(width * .52, height * .52)
+        radius = min(width * .35, height * .42)
+        glow = QRadialGradient(center, radius * 1.15)
+        glow.setColorAt(0, QColor(45, 112, 170, 125))
+        glow.setColorAt(.55, QColor(30, 81, 130, 45))
+        glow.setColorAt(1, QColor(20, 50, 81, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(center, radius * 1.15, radius * 1.15)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(135, 183, 218, 105), 1.4))
+        for angle in (0, 35, 70, 110, 145):
             painter.save()
             painter.translate(center)
             painter.rotate(angle)
-            painter.drawEllipse(QRectF(-self.width() * .35, -self.height() * .24,
-                                      self.width() * .7, self.height() * .48))
+            painter.drawEllipse(QRectF(-radius, -radius * .47, radius * 2, radius * .94))
             painter.restore()
+        painter.setPen(QPen(QColor(93, 153, 197, 90), 1))
+        painter.drawEllipse(center, radius * .68, radius * .68)
+        for dx, dy in ((-.8, -.42), (.84, -.3), (-.63, .63), (.6, .62)):
+            x, y = center.x() + radius * dx, center.y() + radius * dy
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#3680b8"))
+            painter.drawRoundedRect(QRectF(x - 9, y - 6, 18, 12), 2, 2)
+            painter.setBrush(QColor("#a8d0ed"))
+            painter.drawRect(QRectF(x - 24, y - 5, 12, 10))
+            painter.drawRect(QRectF(x + 12, y - 5, 12, 10))
+            painter.setPen(QPen(QColor("#153251"), 1))
+            painter.drawLine(QPointF(x - 11, y), QPointF(x - 9, y))
+            painter.drawLine(QPointF(x + 9, y), QPointF(x + 11, y))
         painter.end()
 
 
@@ -158,6 +168,22 @@ def _display_number(value: Any) -> str:
         return format(Decimal(str(value)), ".8g")
     except (InvalidOperation, TypeError, ValueError):
         return str(value)
+
+
+RESULT_STATUS_LABELS = {
+    "exact": "точное значение", "interval": "интервал",
+    "unknown": "не определено", "not_applicable": "неприменимо",
+}
+
+
+def _display_result(value: dict[str, Any]) -> str:
+    if value.get("value") is not None:
+        return _display_number(value["value"])
+    if value.get("status") == "interval":
+        lower = _display_number(value.get("lower"))
+        upper = _display_number(value.get("upper")) if value.get("upper") is not None else "∞"
+        return f"{'(' if value.get('lower_open') else '['}{lower}, {upper}{')' if value.get('upper_open') else ']'}"
+    return RESULT_STATUS_LABELS.get(value.get("status"), "не определено")
 
 
 class RadarChart(QWidget):
@@ -256,11 +282,7 @@ class ContributionChart(QWidget):
         width = right - left
         label = self.integral.get("value")
         if label is None:
-            lower = self.integral.get("lower")
-            upper = self.integral.get("upper")
-            total_text = (f"I(A) ∈ [{_display_number(lower)}, {_display_number(upper) if upper is not None else '∞'}] баллов"
-                          if self.integral.get("status") == "interval" else
-                          f"I(A): {self.integral.get('status', 'unknown')}")
+            total_text = f"I(A): {_display_result(self.integral)}"
         else:
             total_text = f"I(A) = {_display_number(label)} баллов"
         painter.setPen(QPen(QColor("#273444"), 1))
@@ -318,8 +340,7 @@ class ContributionChart(QWidget):
             painter.drawRect(QRectF(x, yy + 5, 13, 13))
             painter.setPen(QPen(QColor("#273444"), 1))
             value = self.metrics.get(key, {}).get("contribution", {})
-            shown = (_display_number(value.get("value")) if value.get("value") is not None else
-                     value.get("status", "unknown"))
+            shown = _display_result(value)
             painter.drawText(QRectF(x + 19, yy, width / 2 - 18, 25), Qt.AlignmentFlag.AlignLeft,
                              f"{METRIC_LABELS[key]}: {shown}")
         painter.end()
@@ -566,7 +587,7 @@ class AssessmentDialog(QWidget):
                 f"источник: {environment.get('execution_source', '—')}"
             )
         context_lines.append(
-            f"Итог: {_display_number(total) if total is not None else integral.get('status', 'неизвестно')} баллов из 100 · {state}"
+            f"Итог: {_display_result(integral)} баллов из 100 · {state}"
         )
         context_label = QLabel("\n".join(context_lines))
         context_label.setWordWrap(True)
@@ -580,10 +601,12 @@ class AssessmentDialog(QWidget):
         score_caption = QLabel("Интегральная оценка I(A)")
         score_caption.setObjectName("cardDescription")
         score_layout.addWidget(score_caption)
-        score_value = QLabel(_display_number(total) if total is not None else integral.get("status", "—"))
+        score_value = QLabel(_display_result(integral))
         score_value.setObjectName("scoreValue")
         score_layout.addWidget(score_value)
-        score_layout.addWidget(QLabel("из 100 баллов" if total is not None else "значение не определено"))
+        score_layout.addWidget(QLabel("из 100 баллов" if total is not None else
+                                     "интервал баллов из 100" if integral.get("status") == "interval" else
+                                     "значение не определено"))
         summary_strip.addWidget(score_card, 1)
         context_card = QFrame()
         context_card.setObjectName("contentCard")
@@ -593,43 +616,47 @@ class AssessmentDialog(QWidget):
         summary_strip.addWidget(context_card, 3)
         layout.addLayout(summary_strip)
         tabs = QTabWidget()
-        tabs.setContentsMargins(24, 0, 24, 0)
+        tabs.setContentsMargins(28, 0, 28, 0)
+        tabs.tabBar().setExpanding(True)
         layout.addWidget(tabs, 1)
         summary = QWidget()
         summary_layout = QVBoxLayout(summary)
+        summary_layout.setContentsMargins(0, 8, 0, 8)
+        overview = QHBoxLayout()
+        overview.setSpacing(14)
+        table_panel = QFrame()
+        table_panel.setObjectName("contentCard")
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(14, 14, 14, 14)
+        table_heading = QLabel("Семь показателей и их баллы")
+        table_heading.setObjectName("cardTitle")
+        table_layout.addWidget(table_heading)
         table = QTableWidget(0, 10)
         table.setHorizontalHeaderLabels(["Показатель", "Исходное значение", "Единица", "Направление",
                                          "Статус", "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение"])
         table.horizontalHeader().setStretchLastSection(True)
         for column, width in enumerate((155, 145, 65, 85, 90, 120, 120, 65, 120, 200)):
             table.setColumnWidth(column, width)
-        for key, metric in payload.get("metrics", {}).items():
+        metrics = payload.get("metrics", {})
+        metric_order = [key for key in METRIC_LABELS if key in metrics]
+        metric_order.extend(key for key in metrics if key not in METRIC_LABELS)
+        for key in metric_order:
+            metric = metrics[key]
             row = table.rowCount()
             table.insertRow(row)
             raw = metric.get("raw", {})
             normalized = metric.get("normalized", {})
-            if raw.get("value") is not None:
-                raw_value = _display_number(raw["value"])
-            elif raw.get("status") == "interval":
-                lower = _display_number(raw.get("lower"))
-                upper = _display_number(raw.get("upper")) if raw.get("upper") is not None else "∞"
-                left = "(" if raw.get("lower_open") else "["
-                right = ")" if raw.get("upper_open") else "]"
-                raw_value = f"{left}{lower}, {upper}{right}"
-            else:
-                raw_value = "—"
+            raw_value = _display_result(raw)
             values = (
                 f"{metric.get('symbol', key)} ({key})",
                 raw_value,
                 raw.get("unit", ""),
-                metric.get("direction", ""),
-                raw.get("status", ""),
-                _display_number(normalized.get("value")) if normalized.get("value") is not None else normalized.get("status", ""),
-                _display_number(metric.get("partial_score", {}).get("value"))
-                if metric.get("partial_score", {}).get("value") is not None else metric.get("partial_score", {}).get("status", ""),
+                {"min": "меньше", "max": "больше"}.get(metric.get("direction"), metric.get("direction", "")),
+                RESULT_STATUS_LABELS.get(raw.get("status"), raw.get("status", "")),
+                _display_result(normalized),
+                _display_result(metric.get("partial_score", {})),
                 _display_number(metric.get("weight", "")),
-                _display_number(metric.get("contribution", {}).get("value"))
-                if metric.get("contribution", {}).get("value") is not None else metric.get("contribution", {}).get("status", ""),
+                _display_result(metric.get("contribution", {})),
                 raw.get("reason") or normalized.get("reason") or "",
             )
             detail = json.dumps(metric, ensure_ascii=False, indent=2)
@@ -637,35 +664,35 @@ class AssessmentDialog(QWidget):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(detail)
                 table.setItem(row, column, item)
-        summary_layout.addWidget(table)
-        summary_layout.addWidget(QLabel(
+        table_layout.addWidget(table, 1)
+        table_layout.addWidget(QLabel(
             "Полные десятичные значения доступны в подсказках строк и при экспорте JSON/CSV."
         ))
-        charts = QHBoxLayout()
+        overview.addWidget(table_panel, 3)
         self.radar_chart = RadarChart(payload)
+        radar_panel = QFrame()
+        radar_panel.setObjectName("contentCard")
+        radar_layout = QVBoxLayout(radar_panel)
+        radar_layout.setContentsMargins(10, 14, 10, 14)
+        radar_heading = QLabel("Радар частных баллов")
+        radar_heading.setObjectName("cardTitle")
+        radar_layout.addWidget(radar_heading)
+        radar_layout.addWidget(self.radar_chart, 1)
+        radar_export = QPushButton("Сохранить радар PNG")
+        radar_export.clicked.connect(lambda: self.export_png(self.radar_chart, "Сохранить радар", "radar.png"))
+        radar_layout.addWidget(radar_export)
+        overview.addWidget(radar_panel, 2)
+        summary_layout.addLayout(overview, 1)
         self.contribution_chart = ContributionChart(payload)
-        charts.addWidget(self.radar_chart)
-        charts.addWidget(self.contribution_chart)
-        summary_layout.addLayout(charts)
         groups = payload.get("groups", {})
         group_line = "Группы: " + "; ".join(
-            f"{key} = {_display_number(value.get('value')) if value.get('value') is not None else value.get('status')}"
+            f"{key} = {_display_result(value)}"
             for key, value in groups.items()
         )
         summary_layout.addWidget(QLabel(group_line))
         warnings = payload.get("warnings", [])
         if warnings:
             summary_layout.addWidget(QLabel("Предупреждения:\n" + "\n".join(warnings)))
-        chart_exports = QHBoxLayout()
-        for label, chart, title, filename in (
-            ("Радар PNG", self.radar_chart, "Сохранить радар", "radar.png"),
-            ("Вклады PNG", self.contribution_chart, "Сохранить вклады", "contributions.png"),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(lambda _checked=False, w=chart, t=title, f=filename:
-                                   self.export_png(w, t, f))
-            chart_exports.addWidget(button)
-        summary_layout.addLayout(chart_exports)
         tabs.addTab(summary, "Таблица и радар")
 
         compare_page = QWidget()
@@ -681,7 +708,11 @@ class AssessmentDialog(QWidget):
         if callable(compare_callback):
             compare_button.clicked.connect(compare_callback)
         compare_layout.addWidget(compare_button)
-        compare_layout.addStretch(1)
+        compare_layout.addWidget(self.contribution_chart, 1)
+        contributions_export = QPushButton("Сохранить вклады PNG")
+        contributions_export.clicked.connect(lambda: self.export_png(
+            self.contribution_chart, "Сохранить вклады", "contributions.png"))
+        compare_layout.addWidget(contributions_export)
         tabs.addTab(compare_page, "Сравнение серии")
 
         timeline_page = QWidget()
@@ -737,7 +768,15 @@ class AssessmentDialog(QWidget):
             "warnings": warnings,
         }, ensure_ascii=False, indent=2))
         tabs.addTab(explanation, "Пояснения")
-        exports = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("footerBar")
+        exports = QHBoxLayout(footer)
+        exports.setContentsMargins(28, 8, 28, 8)
+        close = QPushButton("Закрыть")
+        close_callback = getattr(parent, "close_assessment", None)
+        close.clicked.connect(close_callback if callable(close_callback) else self.close)
+        exports.addWidget(close)
+        exports.addStretch()
         if saved and callable(getattr(parent, "assign_assessment_to_series", None)):
             series_button = QPushButton("Добавить в серию")
             series_button.clicked.connect(lambda: parent.assign_assessment_to_series(
@@ -748,11 +787,7 @@ class AssessmentDialog(QWidget):
             button = QPushButton(label)
             button.clicked.connect(callback)
             exports.addWidget(button)
-        layout.addLayout(exports)
-        close = QPushButton("Закрыть")
-        close_callback = getattr(parent, "close_assessment", None)
-        close.clicked.connect(close_callback if callable(close_callback) else self.close)
-        layout.addWidget(close)
+        layout.addWidget(footer)
 
     def update_timeline(self) -> None:
         if self.timeline_chart is None or self.experiment is None:
@@ -1247,18 +1282,9 @@ class PassportEditor(QWidget):
         self._invalid_fields: set[tuple[str | int, ...]] = set()
         self._array_tables: dict[tuple[str, ...], QTableWidget] = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        header = QHBoxLayout()
-        self.section_heading = QLabel()
-        self.section_heading.setObjectName("cardTitle")
-        header.addWidget(self.section_heading)
-        header.addStretch()
-        advanced = QPushButton("Расширенный ввод JSON")
-        advanced.clicked.connect(self.open_advanced_editor)
-        header.addWidget(advanced)
-        layout.addLayout(header)
+        layout.setContentsMargins(8, 6, 8, 6)
         self.tabs = QTabWidget()
-        self.tabs.currentChanged.connect(self._update_heading)
+        self.tabs.tabBar().setExpanding(True)
         layout.addWidget(self.tabs)
         self.set_value(value)
 
@@ -1312,6 +1338,7 @@ class PassportEditor(QWidget):
 
     def _field(self, key: str, value: Any, path: tuple[str | int, ...]) -> QWidget:
         cell = QWidget()
+        cell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         cell_layout = QVBoxLayout(cell)
         cell_layout.setContentsMargins(0, 0, 0, 0)
         cell_layout.setSpacing(3)
@@ -1396,6 +1423,7 @@ class PassportEditor(QWidget):
             self._fields(content, node, path, keys)
         else:
             content.addWidget(QLabel("Поля пока не заданы. Их можно добавить в расширенном вводе."))
+        content.addStretch()
         parent.addWidget(card)
 
     def _array_card(self, parent: QVBoxLayout, title: str, path: tuple[str, ...]) -> None:
@@ -1539,10 +1567,6 @@ class PassportEditor(QWidget):
         scroll.setWidget(content)
         return scroll
 
-    def _update_heading(self, index: int) -> None:
-        if 0 <= index < len(self.SECTION_TABS):
-            self.section_heading.setText(self.SECTION_TABS[index][1])
-
     def set_value(self, value: dict[str, Any]) -> None:
         if not isinstance(value, dict):
             raise ValueError("Паспорт должен быть объектом")
@@ -1559,7 +1583,6 @@ class PassportEditor(QWidget):
             self.tabs.addTab(self._section(index), label)
         self.tabs.setCurrentIndex(min(selected, self.tabs.count() - 1))
         self.tabs.blockSignals(False)
-        self._update_heading(self.tabs.currentIndex())
 
     def value(self) -> dict[str, Any]:
         if self._invalid_fields:
@@ -1814,11 +1837,18 @@ class MainWindow(QMainWindow):
         self.saved_results = QComboBox()
         self.saved_results.setVisible(False)
         self.results_search = QLineEdit()
-        self.results_search.setPlaceholderText("Поиск по опыту, модели или дате")
-        self.results_table = QTableWidget(0, 4)
-        self.results_table.setHorizontalHeaderLabels(["Опыт", "Версия входа", "Модель", "Дата сохранения"])
+        self.results_search.setPlaceholderText("Поиск по опыту, алгоритму, сценарию или дате")
+        self.results_model = QComboBox()
+        self.results_model.addItem("Все модели", None)
+        self.results_state = QComboBox()
+        self.results_state.addItem("Все состояния", None)
+        self._result_filters: dict[int, tuple[str, str]] = {}
+        self.results_table = QTableWidget(0, 8)
+        self.results_table.setHorizontalHeaderLabels([
+            "Опыт", "Алгоритм", "Сценарий", "Повтор", "Модель", "Состояние", "I(A)", "Сохранено",
+        ])
         self.results_table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((220, 150, 320)):
+        for column, width in enumerate((160, 180, 170, 70, 110, 110, 95)):
             self.results_table.setColumnWidth(column, width)
         self.results_table.verticalHeader().hide()
         self.results_table.setAlternatingRowColors(True)
@@ -1829,10 +1859,16 @@ class MainWindow(QMainWindow):
             lambda row, _column: self.saved_results.setCurrentIndex(row))
         self.results_table.itemSelectionChanged.connect(self.select_saved_result)
         self.results_search.textChanged.connect(self.filter_saved_results)
+        self.results_model.currentIndexChanged.connect(lambda: self.filter_saved_results(self.results_search.text()))
+        self.results_state.currentIndexChanged.connect(lambda: self.filter_saved_results(self.results_search.text()))
         results_content = QWidget()
         results_content_layout = QVBoxLayout(results_content)
         results_content_layout.setContentsMargins(0, 0, 0, 0)
-        results_content_layout.addWidget(self.results_search)
+        filters = QHBoxLayout()
+        filters.addWidget(self.results_search, 3)
+        filters.addWidget(self.results_model, 1)
+        filters.addWidget(self.results_state, 1)
+        results_content_layout.addLayout(filters)
         results_content_layout.addWidget(self.results_table, 1)
         results_content_layout.addWidget(self.saved_results)
         self.results_page = self._navigation_page(
@@ -1891,44 +1927,41 @@ class MainWindow(QMainWindow):
         editor_brand.setObjectName("brand")
         editor_masthead_layout.addWidget(editor_brand)
         editor_masthead_layout.addStretch()
-        editor_code = QLabel("П05")
-        editor_code.setObjectName("pageCode")
-        editor_masthead_layout.addWidget(editor_code)
-        layout.addWidget(editor_masthead)
-        editor_heading = QLabel("Редактор исходных данных")
-        editor_heading.setObjectName("pageTitle")
-        editor_heading.setContentsMargins(30, 10, 30, 0)
-        layout.addWidget(editor_heading)
-        editor_subtitle = QLabel("Единые формы для импортированного комплекта и ручного ввода")
-        editor_subtitle.setObjectName("pageSubtitle")
-        editor_subtitle.setContentsMargins(30, 0, 30, 4)
-        layout.addWidget(editor_subtitle)
-        toolbar_panel = QFrame()
-        toolbar_panel.setObjectName("contentCard")
-        toolbar_layout = QVBoxLayout(toolbar_panel)
-        toolbar_layout.setContentsMargins(14, 12, 14, 12)
-        for buttons in (
-            (("К разделу экспериментов", self.back_to_experiments),
-             ("Новый", self.new), ("Импорт 4 файлов", self.import_folder),
-             ("Загрузить Ω", self.import_profile), ("Открыть черновик", self.open_draft),
-             ("Экспорт 4 файлов", self.export)),
-            (("История результатов", self.open_assessment), ("Сравнить результаты", self.compare_assessments),
-             ("Серии", self.manage_series), ("Резервная копия", self.backup_store),
-             ("Восстановить копию", self.restore_store)),
-        ):
-            toolbar = QHBoxLayout()
-            for label, callback in buttons:
-                button = QPushButton(label)
-                button.clicked.connect(callback)
-                toolbar.addWidget(button)
-            toolbar_layout.addLayout(toolbar)
-        layout.addWidget(toolbar_panel)
         self.retry_button = QPushButton("Повторить сохранение результата")
-        self.retry_button.setEnabled(False)
+        self._set_retry_available(False)
         self.retry_button.clicked.connect(self.retry_assessment_save)
-        toolbar_layout.addWidget(self.retry_button)
+        editor_masthead_layout.addWidget(self.retry_button)
+        utility_menu = QMenu(self)
+        for label, callback in (
+            ("Новый опыт", self.new), ("Импортировать четыре файла", self.import_folder),
+            ("Открыть черновик", self.open_draft), ("Экспортировать четыре файла", self.export),
+            ("История результатов", self.open_assessment),
+            ("Сравнить результаты", self.compare_assessments), ("Управление сериями", self.manage_series),
+            ("Расширенный ввод паспорта", lambda: self.passport.open_advanced_editor()),
+            ("Создать резервную копию", self.backup_store), ("Восстановить копию", self.restore_store),
+        ):
+            utility_menu.addAction(label, callback)
+        utility_button = QToolButton()
+        utility_button.setObjectName("utilityMenu")
+        utility_button.setText("Действия  ▾")
+        utility_button.setMenu(utility_menu)
+        utility_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        editor_masthead_layout.addWidget(utility_button)
+        self.editor_code = QLabel("П05.1")
+        self.editor_code.setObjectName("pageCode")
+        editor_masthead_layout.addWidget(self.editor_code)
+        layout.addWidget(editor_masthead)
+        self.editor_heading = QLabel()
+        self.editor_heading.setObjectName("pageTitle")
+        self.editor_heading.setContentsMargins(30, 10, 30, 0)
+        layout.addWidget(self.editor_heading)
+        self.editor_subtitle = QLabel()
+        self.editor_subtitle.setObjectName("pageSubtitle")
+        self.editor_subtitle.setContentsMargins(30, 0, 30, 4)
+        layout.addWidget(self.editor_subtitle)
         self.tabs = QTabWidget()
-        self.tabs.setContentsMargins(24, 0, 24, 0)
+        self.tabs.setContentsMargins(30, 0, 30, 0)
+        self.tabs.tabBar().setExpanding(True)
         layout.addWidget(self.tabs, 1)
         self.passport = PassportEditor(empty_passport())
         self.tabs.addTab(self.passport, "Паспорт и условия")
@@ -1938,13 +1971,21 @@ class MainWindow(QMainWindow):
             self.tables[name] = editor
             self.tabs.addTab(editor, title)
         self.profile = JsonTree({"profile_id": "", "metrics": {}}, "Профиль оценивания Ω")
+        load_profile = QPushButton("Загрузить Ω")
+        load_profile.clicked.connect(self.import_profile)
+        self.profile.layout().insertWidget(1, load_profile, alignment=Qt.AlignmentFlag.AlignRight)
         self.tabs.addTab(self.profile, "Профиль оценивания")
+        self.tabs.currentChanged.connect(self._update_editor_heading)
+        self.passport.tabs.currentChanged.connect(self._update_editor_heading)
+        self._update_editor_heading()
         self.passport.changed.connect(self.mark_input_dirty)
+        self.passport.changed.connect(self._update_editor_heading)
         self.profile.changed.connect(self.mark_dirty)
         for editor in self.tables.values():
             editor.changed.connect(self.mark_input_dirty)
         editor_actions = QHBoxLayout()
-        editor_actions.setContentsMargins(24, 8, 24, 8)
+        editor_actions.setContentsMargins(30, 8, 30, 8)
+        editor_actions.setSpacing(10)
         for label, callback in (("Назад", self.back_to_experiments),
                                 ("Добавить следующий эксперимент", self.next_experiment),
                                 ("Сохранить черновик", self.save_draft),
@@ -1954,6 +1995,8 @@ class MainWindow(QMainWindow):
             if label == "Запуск расчёта":
                 button.setProperty("variant", "primary")
             button.clicked.connect(callback)
+            if label == "Проверить данные":
+                editor_actions.addStretch()
             editor_actions.addWidget(button)
         editor_footer = QFrame()
         editor_footer.setObjectName("footerBar")
@@ -1961,6 +2004,29 @@ class MainWindow(QMainWindow):
         layout.addWidget(editor_footer)
         self.statusBar().showMessage("Новый черновик. Пустые наблюдения не создаются автоматически.")
         self.pages.setCurrentWidget(self.start_page)
+
+    def _update_editor_heading(self, _index: int = 0) -> None:
+        section = self.passport.tabs.currentIndex()
+        if self.tabs.currentWidget() is self.passport and 0 <= section < len(self.passport.SECTION_TABS):
+            title = self.passport.SECTION_TABS[section][1]
+            self.editor_code.setText(f"П05.{section + 1}")
+        else:
+            title = {
+                1: "Пакеты: отправка и получение",
+                2: "Маршруты: принятые решения",
+                3: "Каналы: состояние и ресурсы",
+                4: "Профиль оценивания: экспертные оценки и веса",
+            }.get(self.tabs.currentIndex(), "Редактор исходных данных")
+            self.editor_code.setText("П05")
+        self.editor_heading.setText(title)
+        experiment_id = self.passport._data.get("experiment_id", "")
+        self.editor_subtitle.setText(
+            f"{experiment_id or 'Новый опыт'} · единая форма для импорта и ручного ввода · данные текущего опыта"
+        )
+
+    def _set_retry_available(self, available: bool) -> None:
+        self.retry_button.setEnabled(available)
+        self.retry_button.setVisible(available)
 
     def _navigation_page(self, title: str, subtitle: str,
                          buttons: tuple[tuple[str, Any], ...],
@@ -2028,7 +2094,10 @@ class MainWindow(QMainWindow):
         body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(42, 25, 42, 24)
         body_layout.setSpacing(12)
-        display_title = "Подготовка нового эксперимента" if title == "Новый опыт" else title
+        display_title = {
+            "Новый опыт": "Подготовка нового эксперимента",
+            "Результаты и черновики": "Сохранённые эксперименты и результаты",
+        }.get(title, title)
         heading = QLabel(display_title)
         heading.setObjectName("pageTitle")
         body_layout.addWidget(heading)
@@ -2149,6 +2218,7 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.input_page)
 
     def show_editor(self) -> None:
+        self._update_editor_heading()
         self.pages.setCurrentWidget(self.editor_page)
 
     def show_help(self) -> None:
@@ -2164,28 +2234,65 @@ class MainWindow(QMainWindow):
     def refresh_saved_results(self) -> None:
         self.saved_results.clear()
         self.results_table.setRowCount(0)
+        self._result_filters.clear()
+        self.results_model.blockSignals(True)
+        self.results_state.blockSignals(True)
+        self.results_model.clear()
+        self.results_model.addItem("Все модели", None)
+        self.results_state.clear()
+        self.results_state.addItem("Все состояния", None)
         try:
             for assessment_id, draft_id, revision, model, stamp in self.store.list_assessments():
+                payload, experiment, _ = self.store.load_assessment(assessment_id)
+                passport = experiment.passport
+                algorithm = passport.get("algorithm", {})
+                integral = payload.get("integral", {})
+                state = integral.get("status", "unknown")
+                state_label = {"exact": "Точный", "interval": "Интервал",
+                               "unknown": "Не определён", "not_applicable": "Неприменим"}.get(state, state)
+                score = (_display_number(integral.get("value")) if integral.get("value") is not None
+                         else f"{_display_number(integral.get('lower'))}–{_display_number(integral.get('upper'))}"
+                         if state == "interval" else "—")
                 self.saved_results.addItem(
                     f"{draft_id}, вход v{revision}, {model}, {stamp}", assessment_id,
                 )
                 row = self.results_table.rowCount()
                 self.results_table.insertRow(row)
                 display_stamp = stamp[:19].replace("T", " ") + (" UTC" if stamp.endswith("+00:00") else "")
-                for column, value in enumerate((draft_id, f"v{revision}", model, display_stamp)):
-                    self.results_table.setItem(row, column, QTableWidgetItem(str(value)))
-                self.results_table.setRowHeight(row, 36)
+                values = (
+                    draft_id, algorithm.get("name_ru") or algorithm.get("algorithm_id") or "—",
+                    passport.get("scenario_id") or "—", passport.get("repeat_id") or "—",
+                    model, state_label, score, display_stamp,
+                )
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(f"Вход v{revision} · Ω {payload.get('profile_id', '—')} · {stamp}")
+                    self.results_table.setItem(row, column, item)
+                self._result_filters[row] = (model, state)
+                if self.results_model.findData(model) < 0:
+                    self.results_model.addItem(model, model)
+                if self.results_state.findData(state) < 0:
+                    self.results_state.addItem(state_label, state)
+                self.results_table.setRowHeight(row, 46)
             if self.results_table.rowCount():
                 self.results_table.selectRow(0)
             self.filter_saved_results(self.results_search.text())
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, KeyError, ValueError, OSError) as exc:
             self._error(exc)
+        finally:
+            self.results_model.blockSignals(False)
+            self.results_state.blockSignals(False)
 
     def filter_saved_results(self, query: str) -> None:
         needle = query.casefold().strip()
+        selected_model = self.results_model.currentData()
+        selected_state = self.results_state.currentData()
         for row in range(self.results_table.rowCount()):
-            visible = any(needle in self.results_table.item(row, column).text().casefold()
-                          for column in range(self.results_table.columnCount()))
+            model, state = self._result_filters[row]
+            visible = ((selected_model is None or model == selected_model)
+                       and (selected_state is None or state == selected_state)
+                       and any(needle in self.results_table.item(row, column).text().casefold()
+                               for column in range(self.results_table.columnCount())))
             self.results_table.setRowHidden(row, not visible)
         selected = next((row for row in range(self.results_table.rowCount())
                          if not self.results_table.isRowHidden(row)), -1)
@@ -2517,7 +2624,7 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.setWindowModified(False)
         self.unsaved_assessment = None
-        self.retry_button.setEnabled(False)
+        self._set_retry_available(False)
         series_status = ""
         if self.active_series_id is not None:
             try:
@@ -2537,7 +2644,7 @@ class MainWindow(QMainWindow):
             return
         if isinstance(exc, ResultPersistenceError):
             self.unsaved_assessment = exc
-            self.retry_button.setEnabled(True)
+            self._set_retry_available(True)
             self.statusBar().showMessage("Расчёт выполнен, результат не сохранён")
             answer = QMessageBox.critical(
                 self, "Результат не сохранён",
@@ -2577,7 +2684,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка сохранения", f"Результат пока не сохранён: {exc}")
             return
         self.unsaved_assessment = None
-        self.retry_button.setEnabled(False)
+        self._set_retry_available(False)
         self.statusBar().showMessage(f"Результат сохранён: {assessment_id}")
         _, experiment, _ = self.store.load_assessment(assessment_id)
         self.show_assessment(pending.payload, True, experiment)
@@ -2703,7 +2810,7 @@ class MainWindow(QMainWindow):
                     return
             else:
                 self.unsaved_assessment = None
-                self.retry_button.setEnabled(False)
+                self._set_retry_available(False)
         if not self._confirm_leave():
             return
         accepted = QMessageBox.question(
@@ -2749,7 +2856,7 @@ class MainWindow(QMainWindow):
                     return
             else:
                 self.unsaved_assessment = None
-                self.retry_button.setEnabled(False)
+                self._set_retry_available(False)
         if self._confirm_leave():
             event.accept()
         else:

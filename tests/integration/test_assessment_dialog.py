@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QTableWidget, QTabWidget,
+    QApplication, QFileDialog, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QTableWidget, QTabWidget,
 )
 
 from scanner.core import calculate
@@ -23,6 +23,7 @@ from scanner.gui import (
     SeriesManagerDialog, TableEditor,
 )
 from scanner.io.format import read_folder
+from scanner.io.profile import validate_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -369,6 +370,35 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     editor.set_value(original)
     assert editor.value() == original
     editor.deleteLater()
+    app.processEvents()
+
+
+def test_missing_profile_is_reported_before_calculation(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(tmp_path / "missing-profile.sqlite3")
+    window._set_experiment(read_folder(reference_folder))
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, title, message: messages.append((title, message)))
+    window.check()
+    assert "PROFILE_ID" in messages[-1][1]
+    window.run_assessment()
+    assert messages[-1][0] == "Нужен профиль Ω"
+    assert "configs/examples/profile_demo.json" in messages[-1][1]
+    assert window.tabs.currentWidget() is window.profile
+    assert window.assessment_worker is None
+
+    demo_path = ROOT / "configs/examples/profile_demo.json"
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        member = next(name for name in archive.namelist() if name.endswith("support/profile_demo.json"))
+        assert demo_path.read_bytes() == archive.read(member)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(demo_path), "JSON (*.json)"))
+    window.import_profile()
+    assert validate_profile(window.profile.value()) == []
+    window.dirty = False
+    window.close()
+    window.deleteLater()
     app.processEvents()
 
 
@@ -790,20 +820,9 @@ def test_gui_validation_error_returns_to_editor_without_saving_result(
     window._set_experiment(read_folder(reference_folder), {})
     window.show_editor()
     errors: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox, "critical",
-        lambda _parent, _title, message, *_args, **_kwargs: errors.append(str(message)),
-    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, message: errors.append(str(message)))
 
     window.run_assessment()
-    worker = window.assessment_worker
-    assert worker is not None and worker.wait(10_000)
-    deadline = time.monotonic() + 5
-    while window.assessment_worker is not None and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-    app.processEvents()
-
     assert window.assessment_worker is None
     assert window.pages.currentWidget() is window.editor_page
     assert window.store.list_assessments() == []

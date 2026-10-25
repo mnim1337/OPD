@@ -2398,8 +2398,10 @@ class MainWindow(QMainWindow):
         try:
             with open(path, encoding="utf-8") as stream:
                 profile = json.load(stream)
-            if validate_profile(profile):
-                raise ValueError("Профиль Ω не проходит проверку: " + str(validate_profile(profile)[0]))
+            profile_errors = validate_profile(profile)
+            if profile_errors:
+                raise ValueError("Профиль Ω не проходит проверку:\n" +
+                                 "\n".join(map(str, profile_errors[:10])))
             self.profile.set_value(profile)
             self.mark_dirty()
             self.statusBar().showMessage(f"Загружен профиль {profile['profile_id']}")
@@ -2435,9 +2437,7 @@ class MainWindow(QMainWindow):
     def check(self) -> None:
         try:
             experiment, profile = self._experiment()
-            report = validate_experiment(experiment, complete=False)
-            if profile.get("profile_id") or profile.get("metrics"):
-                report += validate_profile(profile)
+            report = validate_profile(profile) + validate_experiment(experiment, complete=False)
             errors = [item for item in report if item.severity == "error"]
             message = "\n".join(str(item) for item in report[:30])
             if len(report) > 30:
@@ -2465,6 +2465,17 @@ class MainWindow(QMainWindow):
             return
         try:
             experiment, profile = self._experiment()
+            profile_errors = validate_profile(profile)
+            if profile_errors:
+                self.tabs.setCurrentWidget(self.profile)
+                QMessageBox.warning(
+                    self, "Нужен профиль Ω",
+                    "Для расчёта загрузите профиль кнопкой «Загрузить Ω» или заполните вкладку "
+                    "«Профиль оценивания». Пример для синтетических опытов находится в "
+                    "configs/examples/profile_demo.json; его шкалы не утверждены для реальных данных.\n\n" +
+                    "\n".join(map(str, profile_errors[:10])),
+                )
+                return
             draft_id = self.draft_id or str(experiment.passport.get("experiment_id") or "").strip()
             if not draft_id:
                 draft_id, ok = QInputDialog.getText(self, "Идентификатор опыта", "Имя записи:")

@@ -8,7 +8,7 @@ from zipfile import ZipFile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QTableWidget, QTabWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QInputDialog, QTableWidget, QTabWidget
 
 from scanner.core import calculate
 from scanner.core.dispatcher import calculate_and_save
@@ -382,5 +382,68 @@ def test_save_unsaved_changes_on_application_exit_persists_new_revision(
     assert persisted_revision == revision + 1
     assert persisted.experiment_id == "SAVED-EXIT-EDIT"
     assert window.dirty is False
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_experiments_menu_routes_new_continue_results_and_main_menu(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        profile_name = next(name for name in archive.namelist() if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    experiment = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "experiments-routes.sqlite3")
+    window.store.save("continue-this", experiment, profile)
+    result_id, _, _ = calculate_and_save(window.store, "view-this", experiment, profile)
+    series_id = window.store.create_series("Existing series")
+
+    def click(page, label: str) -> None:
+        button = next(button for button in page.findChildren(QPushButton) if button.text() == label)
+        button.click()
+
+    click(window.start_page, "Начать")
+    click(window.main_menu_page, "Эксперименты")
+    click(window.experiments_page, "Начать новый эксперимент")
+    assert window.pages.currentWidget() is window.input_page
+    click(window.input_page, "Назад")
+
+    click(window.experiments_page, "Продолжить предыдущий")
+    assert window.pages.currentWidget() is window.results_page
+    monkeypatch.setattr(
+        QInputDialog, "getItem",
+        lambda _parent, _title, _label, items, *_args, **_kwargs: (
+            next(item for item in items if item.startswith("continue-this")), True,
+        ),
+    )
+    click(window.results_page, "Продолжить черновик")
+    assert window.pages.currentWidget() is window.editor_page
+    assert window.draft_id == "continue-this"
+    window.back_to_experiments()
+
+    click(window.experiments_page, "Просмотреть результаты")
+    assert window.pages.currentWidget() is window.results_page
+    assert window.saved_results.count() == 1
+
+    def add_selected_to_series(dialog: SeriesManagerDialog) -> int:
+        dialog.series_combo.setCurrentIndex(dialog.series_combo.findData(series_id))
+        dialog.assessment_combo.setCurrentIndex(dialog.assessment_combo.findData(result_id))
+        dialog.add_assessment()
+        return 0
+
+    monkeypatch.setattr(SeriesManagerDialog, "exec", add_selected_to_series)
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
+    click(window.results_page, "Серии")
+    assert [row[0] for row in window.store.series_assessments(series_id)] == [result_id]
+    click(window.results_page, "Открыть выбранную оценку")
+    assert window.pages.currentWidget() is window.assessment_panel
+    assert window.assessment_panel.payload["assessment_id"] == result_id
+    window.close_assessment()
+    assert window.pages.currentWidget() is window.results_page
+    click(window.results_page, "Назад")
+    click(window.experiments_page, "Назад в главное меню")
+    assert window.pages.currentWidget() is window.main_menu_page
+    window.close()
     window.deleteLater()
     app.processEvents()

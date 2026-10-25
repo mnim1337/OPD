@@ -1232,7 +1232,7 @@ class MainWindow(QMainWindow):
         self.experiments_page = self._navigation_page(
             "Эксперименты", "Подготовка и просмотр оценок", (
                 ("Начать новый эксперимент", self.show_input_choices),
-                ("Продолжить предыдущий", self.open_draft),
+                ("Продолжить предыдущий", self.show_saved_results),
                 ("Просмотреть результаты", self.show_saved_results),
                 ("Назад в главное меню", self.show_main_menu),
             ),
@@ -1255,7 +1255,7 @@ class MainWindow(QMainWindow):
         )
         self.saved_results = QComboBox()
         self.results_page = self._navigation_page(
-            "Сохранённые результаты", "Оценки открываются без повторного расчёта", (
+            "Результаты и черновики", "Оценки открываются без повторного расчёта; черновик можно продолжить", (
                 ("Открыть выбранную оценку", self.open_selected_result),
                 ("Продолжить черновик", self.open_draft),
                 ("Серии", self.manage_series), ("Назад", self.show_experiments),

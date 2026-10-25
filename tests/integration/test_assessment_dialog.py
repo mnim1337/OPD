@@ -15,7 +15,8 @@ from scanner.core import calculate
 from scanner.core.dispatcher import calculate_and_save
 import scanner.gui as gui_module
 from scanner.gui import (
-    AssessmentDialog, AssessmentWorker, MainWindow, NetworkMark, PassportEditor, SeriesManagerDialog, TableEditor,
+    AssessmentDialog, AssessmentWorker, ComparisonDialog, MainWindow, NetworkMark, PassportEditor,
+    SeriesManagerDialog, TableEditor,
 )
 from scanner.io.format import read_folder
 
@@ -167,6 +168,39 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
         assert dialog.timeline_chart.time_window != full_interval
     dialog.close()
     dialog.deleteLater()
+    app.processEvents()
+
+
+def test_comparison_view_explains_incomparable_conditions_without_ranking() -> None:
+    app = QApplication.instance() or QApplication([])
+    metrics = {
+        key: {
+            "symbol": key, "partial_score": {"status": "exact", "value": "50"},
+            "contribution": {"status": "exact", "value": "10"},
+            "raw": {"status": "exact"},
+        }
+        for key in gui_module.METRIC_LABELS
+    }
+    payload = {"integral": {"status": "exact", "value": "50"}, "metrics": metrics}
+    first = dict(payload, experiment_id="SYNTHETIC-A")
+    second = dict(payload, experiment_id="SYNTHETIC-B")
+
+    incomparable = ComparisonDialog(first, second, ["Состав или исходное состояние сети"])
+    labels = [label.text() for label in incomparable.findChildren(QLabel)]
+    message = next(label for label in labels if label.startswith("Условия несопоставимы"))
+    assert "общую оценку и рейтинг не формируем" in message.lower()
+    assert "Состав или исходное состояние сети" in message
+    assert "SYNTHETIC-A" in message or any("SYNTHETIC-A" in label for label in labels)
+    table = incomparable.findChild(QTableWidget)
+    assert table is not None and table.rowCount() == 7
+
+    comparable = ComparisonDialog(first, second, [])
+    comparable_labels = [label.text() for label in comparable.findChildren(QLabel)]
+    assert any(label.startswith("Условия сопоставимы.") for label in comparable_labels)
+    incomparable.close()
+    comparable.close()
+    incomparable.deleteLater()
+    comparable.deleteLater()
     app.processEvents()
 
 

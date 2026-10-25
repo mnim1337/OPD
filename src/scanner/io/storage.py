@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import sqlite3
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +67,21 @@ class DraftStore:
                     payload_json TEXT NOT NULL,
                     FOREIGN KEY (draft_id, draft_revision) REFERENCES drafts(draft_id, revision),
                     FOREIGN KEY (profile_id, profile_version) REFERENCES profiles(profile_id, version)
+                );
+                CREATE TABLE IF NOT EXISTS series (
+                    series_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+                    created_utc TEXT NOT NULL,
+                    closed_utc TEXT
+                );
+                CREATE TABLE IF NOT EXISTS series_assessments (
+                    series_id TEXT NOT NULL REFERENCES series(series_id),
+                    assessment_id TEXT NOT NULL REFERENCES assessments(assessment_id),
+                    position INTEGER NOT NULL,
+                    added_utc TEXT NOT NULL,
+                    PRIMARY KEY (series_id, assessment_id),
+                    UNIQUE (series_id, position)
                 );
             """)
 
@@ -195,3 +212,110 @@ class DraftStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as source, sqlite3.connect(target) as backup:
             source.backup(backup)
+
+    def restore(self, source_path: str | Path) -> None:
+        """Validate a backup, copy it beside the live DB, then atomically replace it."""
+        source_path = Path(source_path)
+        if source_path.resolve() == self.path.resolve():
+            raise ValueError("Выберите резервную копию, отличную от рабочего хранилища")
+        temporary_path: Path | None = None
+        try:
+            with sqlite3.connect(source_path) as source:
+                integrity = source.execute("PRAGMA integrity_check").fetchone()
+                if integrity is None or integrity[0] != "ok":
+                    raise ValueError("Резервная копия не прошла проверку целостности")
+                tables = {row[0] for row in source.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )}
+                required = {"drafts", "originals", "profiles", "draft_profiles", "assessments"}
+                if not required.issubset(tables):
+                    raise ValueError("В резервной копии отсутствуют таблицы OPD")
+                foreign_key_errors = source.execute("PRAGMA foreign_key_check").fetchone()
+                if foreign_key_errors is not None:
+                    raise ValueError("В резервной копии нарушены связи между записями")
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                descriptor, name = tempfile.mkstemp(prefix=self.path.name + ".restore-",
+                                                    suffix=".sqlite3", dir=self.path.parent)
+                os.close(descriptor)
+                temporary_path = Path(name)
+                with sqlite3.connect(temporary_path) as destination:
+                    source.backup(destination)
+            os.replace(temporary_path, self.path)
+            # Older valid OPD backups may not yet contain series tables.
+            with self._connect() as db:
+                db.executescript("""
+                    CREATE TABLE IF NOT EXISTS series (
+                        series_id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+                        created_utc TEXT NOT NULL,
+                        closed_utc TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS series_assessments (
+                        series_id TEXT NOT NULL REFERENCES series(series_id),
+                        assessment_id TEXT NOT NULL REFERENCES assessments(assessment_id),
+                        position INTEGER NOT NULL,
+                        added_utc TEXT NOT NULL,
+                        PRIMARY KEY (series_id, assessment_id),
+                        UNIQUE (series_id, position)
+                    );
+                """)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+
+    def create_series(self, title: str) -> str:
+        if not title.strip():
+            raise ValueError("Укажите название серии")
+        series_id = str(uuid.uuid4())
+        with self._connect() as db:
+            db.execute("INSERT INTO series VALUES (?, ?, 'open', ?, NULL)",
+                       (series_id, title.strip(), datetime.now(timezone.utc).isoformat()))
+        return series_id
+
+    def list_series(self) -> list[tuple[str, str, str, int]]:
+        with self._connect() as db:
+            return db.execute("""
+                SELECT s.series_id, s.title, s.status, COUNT(sa.assessment_id)
+                FROM series s LEFT JOIN series_assessments sa ON sa.series_id = s.series_id
+                GROUP BY s.series_id ORDER BY s.created_utc DESC
+            """).fetchall()
+
+    def add_to_series(self, series_id: str, assessment_id: str) -> int:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM series WHERE series_id = ?", (series_id,)).fetchone()
+            if row is None:
+                raise KeyError(series_id)
+            if row[0] != "open":
+                raise ValueError("Нельзя добавлять оценки в завершённую серию")
+            existing = db.execute(
+                "SELECT position FROM series_assessments WHERE series_id = ? AND assessment_id = ?",
+                (series_id, assessment_id),
+            ).fetchone()
+            if existing:
+                return existing[0]
+            position = db.execute(
+                "SELECT COALESCE(MAX(position), 0) + 1 FROM series_assessments WHERE series_id = ?",
+                (series_id,),
+            ).fetchone()[0]
+            db.execute("INSERT INTO series_assessments VALUES (?, ?, ?, ?)",
+                       (series_id, assessment_id, position, datetime.now(timezone.utc).isoformat()))
+        return position
+
+    def series_assessments(self, series_id: str) -> list[tuple[str, str, int, str, str]]:
+        with self._connect() as db:
+            return db.execute("""
+                SELECT a.assessment_id, a.draft_id, a.draft_revision, a.model_version, a.created_utc
+                FROM series_assessments sa JOIN assessments a USING (assessment_id)
+                WHERE sa.series_id = ? ORDER BY sa.position
+            """, (series_id,)).fetchall()
+
+    def close_series(self, series_id: str) -> None:
+        with self._connect() as db:
+            result = db.execute(
+                "UPDATE series SET status = 'closed', closed_utc = ? WHERE series_id = ? AND status = 'open'",
+                (datetime.now(timezone.utc).isoformat(), series_id),
+            )
+            if result.rowcount == 0:
+                raise KeyError(series_id)

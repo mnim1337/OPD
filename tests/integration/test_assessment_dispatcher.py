@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import shutil
+import copy
+from threading import Event
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 
 from scanner.core import dispatcher
+from scanner.core.comparison import comparability_reasons
 from scanner.core.dispatcher import ResultPersistenceError, calculate_and_save
+from scanner.core.runner import CalculationCancelled
 from scanner.io.format import read_folder
 from scanner.io.storage import DraftStore
 
@@ -42,9 +46,20 @@ def test_dispatcher_pins_input_and_profile_and_history_loads_without_recalculati
     assert saved_experiment.experiment_id == experiment.experiment_id
     assert saved_experiment.tables == experiment.tables
     assert saved_profile == profile
+    series_id = store.create_series("Контрольная серия")
+    assert store.add_to_series(series_id, assessment_id) == 1
+    assert store.add_to_series(series_id, assessment_id) == 1
+    assert store.series_assessments(series_id)[0][0] == assessment_id
     backup_path = tmp_path / "saved-assessment-backup.sqlite3"
     store.backup(backup_path)
     assert DraftStore(backup_path).load_assessment(assessment_id)[0] == calculated
+    restored = DraftStore(tmp_path / "restored.sqlite3")
+    restored.restore(backup_path)
+    assert restored.load_assessment(assessment_id)[0] == calculated
+    assert restored.list_series()[0][:3] == (series_id, "Контрольная серия", "open")
+    store.close_series(series_id)
+    with pytest.raises(ValueError):
+        store.add_to_series(series_id, assessment_id)
 
     def unexpected_recalculation(*_args, **_kwargs):
         raise AssertionError("Загрузка истории не должна запускать расчёт")
@@ -105,3 +120,51 @@ def test_backup_is_consistent_and_cannot_overwrite_active_store(tmp_path: Path) 
     store.backup(backup)
     assert backup.exists()
     assert DraftStore(backup).list_assessments() == []
+    with pytest.raises(ValueError):
+        store.restore(store.path)
+
+
+def test_comparability_ignores_measured_outcomes_but_checks_conditions(
+    reference_folder: Path,
+) -> None:
+    first = read_folder(reference_folder)
+    second = copy.deepcopy(first)
+    second.tables["routes.csv"][0]["route_state"] = "unknown"
+    second.tables["channels.csv"][0]["tx_data_bytes"] = 0
+    profile = {"metrics": {}}
+    assert comparability_reasons(first, profile, second, profile) == []
+
+    second.passport["network"]["network_id"] = "different-network"
+    assert comparability_reasons(first, profile, second, profile) == ["Состав или исходное состояние сети"]
+
+
+def test_cancellation_keeps_pinned_input_but_does_not_store_partial_assessment(
+    tmp_path: Path,
+) -> None:
+    with ZipFile(FIVE_EXPERIMENTS) as archive:
+        names = archive.namelist()
+        input_name = next(name for name in names if name.endswith("/experiment.json"))
+        prefix = input_name.rsplit("/", 1)[0] + "/"
+        folder = tmp_path / "cancelled-input"
+        folder.mkdir()
+        for name in names:
+            if name.startswith(prefix):
+                (folder / name.removeprefix(prefix)).write_bytes(archive.read(name))
+        profile_name = next(name for name in names if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    experiment = read_folder(folder)
+    store = DraftStore(tmp_path / "cancel.sqlite3")
+    cancel = Event()
+    progress: list[str] = []
+
+    def request_at_k2(message: str) -> None:
+        progress.append(message)
+        if message == "Оценивание К2":
+            cancel.set()
+
+    with pytest.raises(CalculationCancelled):
+        calculate_and_save(store, "cancelled", experiment, profile,
+                           progress=request_at_k2, cancelled=cancel.is_set)
+    assert progress[0] == "Проверка и фиксация входа и профиля Ω"
+    assert store.list_drafts()
+    assert store.list_assessments() == []

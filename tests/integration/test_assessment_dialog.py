@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import os
+import json
+from pathlib import Path
+from zipfile import ZipFile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QTableWidget
+from PySide6.QtWidgets import QApplication, QTableWidget, QTabWidget
 
-from scanner.gui import AssessmentDialog
+from scanner.core import calculate
+from scanner.gui import AssessmentDialog, MainWindow
+from scanner.io.format import read_folder
 
+
+ROOT = Path(__file__).resolve().parents[2]
+CONTROL_ARCHIVE = ROOT / "requirements/эксперимент 5 штук/PAK_5_experiments_with_validation.zip"
 
 def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     app = QApplication.instance() or QApplication([])
@@ -44,3 +52,56 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     assert table.item(0, 4).text() == "unknown"
     assert table.item(1, 1).text() == "(1, ∞)"
     dialog.close()
+    dialog.deleteLater()
+    app.processEvents()
+
+
+def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        names = archive.namelist()
+        passport_name = next(name for name in names if name.endswith("EXP01_REACTIVE_4/experiment.json"))
+        prefix = passport_name.rsplit("/", 1)[0] + "/"
+        folder = tmp_path / "control"
+        folder.mkdir()
+        for name in names:
+            if name.startswith(prefix):
+                (folder / name.removeprefix(prefix)).write_bytes(archive.read(name))
+        profile_name = next(name for name in names if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    experiment = read_folder(folder)
+    payload = calculate(experiment, profile).as_dict()
+    payload.update({"input_revision": 1, "profile_version": 1, "assessment_id": "test"})
+    payload["profile"] = profile
+    dialog = AssessmentDialog(payload, True, experiment)
+    dialog.show()
+    app.processEvents()
+    tabs = dialog.findChild(QTabWidget)
+    assert tabs is not None and tabs.count() == 4
+    assert dialog.timeline_chart is not None
+    assert dialog.radar_chart.grab().width() > 100
+    tabs.setCurrentIndex(2)
+    app.processEvents()
+    assert dialog.timeline_chart.grab().width() > 100
+    dialog.close()
+    dialog.deleteLater()
+    app.processEvents()
+
+
+def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(tmp_path / "drafts.sqlite3")
+    assert window.pages.currentWidget() is window.start_page
+    window.show_main_menu()
+    assert window.pages.currentWidget() is window.main_menu_page
+    window.show_experiments()
+    assert window.pages.currentWidget() is window.experiments_page
+    window.show_input_choices()
+    assert window.pages.currentWidget() is window.input_page
+    window.new()
+    assert window.pages.currentWidget() is window.editor_page
+    window.show_saved_results()
+    assert window.pages.currentWidget() is window.results_page
+    window.close()
+    window.deleteLater()
+    app.processEvents()

@@ -1572,7 +1572,7 @@ class PassportEditor(QWidget):
         dialog.setWindowTitle("Расширенный ввод паспорта")
         dialog.resize(950, 680)
         layout = QVBoxLayout(dialog)
-        editor = JsonTree(self.value(), "Полный паспорт")
+        editor = JsonTree(deepcopy(self._data), "Полный паспорт")
         layout.addWidget(editor)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
                                    QDialogButtonBox.StandardButton.Cancel)

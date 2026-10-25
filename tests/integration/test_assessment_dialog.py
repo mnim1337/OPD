@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import time
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -46,15 +47,25 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
                 "partial_score": {"status": "exact", "value": "100"}, "weight": "0.2",
                 "contribution": {"status": "exact", "value": "20"},
             },
+            "P_res": {
+                "symbol": "P_res", "direction": "max", "raw": {
+                    "status": "not_applicable", "value": None, "lower": None, "upper": None,
+                    "unit": "%", "reason": "нет применимых событий", "lower_open": False,
+                    "upper_open": False,
+                }, "normalized": {"status": "not_applicable", "value": None},
+                "partial_score": {"status": "not_applicable", "value": None}, "weight": "0.2",
+                "contribution": {"status": "not_applicable", "value": None},
+            },
         },
     }
     dialog = AssessmentDialog(payload, True)
     table = dialog.findChild(QTableWidget)
     assert table is not None
-    assert table.rowCount() == 2
+    assert table.rowCount() == 3
     assert table.item(0, 1).text() == "—"
     assert table.item(0, 4).text() == "unknown"
     assert table.item(1, 1).text() == "(1, ∞)"
+    assert table.item(2, 4).text() == "not_applicable"
     dialog.close()
     dialog.deleteLater()
     app.processEvents()
@@ -81,7 +92,9 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     dialog.show()
     app.processEvents()
     tabs = dialog.findChild(QTabWidget)
-    assert tabs is not None and tabs.count() == 4
+    assert tabs is not None and [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Таблица и радар", "Сравнение серии", "Диаграмма Ганта", "Пояснения",
+    ]
     assert dialog.timeline_chart is not None
     assert dialog.radar_chart.grab().width() > 100
     tabs.setCurrentIndex(2)
@@ -444,6 +457,87 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
     click(window.results_page, "Назад")
     click(window.experiments_page, "Назад в главное меню")
     assert window.pages.currentWidget() is window.main_menu_page
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        names = archive.namelist()
+        experiment_paths = [name for name in names if name.endswith("/experiment.json")
+                            and "/experiments/" in name]
+        profile_name = next(name for name in names if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+        experiments = []
+        for passport_path in experiment_paths[:2]:
+            prefix = passport_path.rsplit("/", 1)[0] + "/"
+            folder = tmp_path / passport_path.split("/")[-2]
+            folder.mkdir()
+            for name in names:
+                if name.startswith(prefix):
+                    relative = name.removeprefix(prefix)
+                    if relative and not name.endswith("/"):
+                        target = folder / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(archive.read(name))
+            experiments.append(read_folder(folder))
+
+    first, second = experiments
+    assert first.experiment_id != second.experiment_id
+    window = MainWindow(tmp_path / "next-experiment.sqlite3")
+    series_id = window.store.create_series("Два синтетических опыта")
+    window.active_series_id = series_id
+
+    def run_and_wait(experiment) -> None:
+        window._set_experiment(experiment, profile)
+        window.run_assessment()
+        worker = window.assessment_worker
+        assert worker is not None
+        assert worker.wait(10_000)
+        deadline = time.monotonic() + 5
+        while window.assessment_worker is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        app.processEvents()
+        assert window.assessment_worker is None
+        assert window.assessment_panel is not None
+        assert window.pages.currentWidget() is window.assessment_panel
+        assert window.assessment_panel.payload["assessment_id"]
+
+    run_and_wait(first)
+    first_id = window.assessment_panel.payload["assessment_id"]
+    window.close_assessment()
+    next_button = next(button for button in window.editor_page.findChildren(QPushButton)
+                       if button.text() == "Добавить следующий эксперимент")
+    next_button.click()
+    assert window.pages.currentWidget() is window.input_page
+    assert window.active_series_id == series_id
+
+    empty_forms = next(button for button in window.input_page.findChildren(QPushButton)
+                       if button.text() == "Открыть пустые формы")
+    empty_forms.click()
+    assert window.draft_id is None
+    assert all(editor.model.rowCount() == 0 for editor in window.tables.values())
+    run_and_wait(second)
+    second_id = window.assessment_panel.payload["assessment_id"]
+
+    assert first_id != second_id
+    entries = window.store.series_assessments(series_id)
+    assert [entry[0] for entry in entries] == [first_id, second_id]
+    saved_first, experiment_first, _ = window.store.load_assessment(first_id)
+    saved_second, experiment_second, _ = window.store.load_assessment(second_id)
+    assert experiment_first.experiment_id == saved_first["experiment_id"] == first.experiment_id
+    assert experiment_second.experiment_id == saved_second["experiment_id"] == second.experiment_id
+    assert len(experiment_first.tables["packets.csv"]) == len(first.tables["packets.csv"])
+    assert len(experiment_second.tables["packets.csv"]) == len(second.tables["packets.csv"])
+    assert all(row["experiment_id"] == first.experiment_id
+               for row in experiment_first.tables["packets.csv"])
+    assert all(row["experiment_id"] == second.experiment_id
+               for row in experiment_second.tables["packets.csv"])
     window.close()
     window.deleteLater()
     app.processEvents()

@@ -16,7 +16,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox,
+    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox,
     QPlainTextEdit, QScrollArea,
     QPushButton, QProgressDialog, QTableView, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget, QFileDialog, QTableWidget, QTableWidgetItem, QStackedWidget,
@@ -41,14 +41,54 @@ METRIC_LABELS = {
 CHART_COLORS = [QColor("#2374AB"), QColor("#F18F01"), QColor("#C73E1D"),
                 QColor("#3B8C6E"), QColor("#8055A2"), QColor("#D65DB1"), QColor("#65737E")]
 
+# Appendix B visual album: dark masthead, pale workspace, white cards and blue actions.
+UI_STYLESHEET = """
+QMainWindow, QDialog { background: #f1f5fb; color: #203650; }
+QWidget#workspacePage { background: #f1f5fb; }
+QWidget#startPage { background: #153251; }
+QFrame#masthead { background: #142940; border: 0; }
+QLabel#brand { color: #ffffff; font-size: 17px; font-weight: 700; }
+QLabel#pageCode { color: #a7bfd8; font-size: 11px; }
+QLabel#pageTitle { color: #203650; font-size: 29px; font-weight: 700; }
+QLabel#pageSubtitle { color: #71879f; font-size: 14px; }
+QLabel#heroTitle { color: #ffffff; font-size: 42px; font-weight: 700; }
+QLabel#heroSubtitle { color: #c7d8ea; font-size: 17px; }
+QLabel#heroEyebrow { color: #9dbbd9; font-size: 12px; font-weight: 700; }
+QLabel#cardTitle { color: #203650; font-size: 19px; font-weight: 700; }
+QLabel#cardDescription { color: #71879f; font-size: 14px; }
+QLabel#scoreValue { color: #2d62c6; font-size: 36px; font-weight: 700; }
+QLabel#infoNote { background: #e7effb; color: #2d62c6; border-radius: 8px;
+                  padding: 13px 16px; font-size: 13px; }
+QFrame#contentCard { background: #ffffff; border: 1px solid #d9e4f2; border-radius: 12px; }
+QFrame#footerBar { background: #ffffff; border-top: 1px solid #d9e4f2; }
+QPushButton { background: #ffffff; color: #203650; border: 1px solid #d9e4f2;
+              border-radius: 7px; padding: 8px 16px; font-weight: 600; min-height: 24px; }
+QPushButton:hover { border-color: #2d62c6; background: #f3f7ff; }
+QPushButton:disabled { color: #9bacc0; background: #f3f6fa; }
+QPushButton[variant="primary"] { background: #2d62c6; color: #ffffff; border-color: #2d62c6; }
+QPushButton[variant="primary"]:hover { background: #2257b9; }
+QTabWidget::pane { border: 1px solid #d9e4f2; background: #ffffff; border-radius: 8px; }
+QTabBar::tab { background: #ffffff; color: #71879f; border: 1px solid #d9e4f2;
+               padding: 9px 18px; margin-right: 3px; border-radius: 6px; }
+QTabBar::tab:selected { background: #2d62c6; color: #ffffff; border-color: #2d62c6; }
+QTableView, QTableWidget, QTreeWidget, QComboBox, QPlainTextEdit {
+    background: #ffffff; color: #203650; border: 1px solid #d9e4f2; border-radius: 6px;
+    selection-background-color: #e6efff; selection-color: #203650;
+}
+QHeaderView::section { background: #e7effb; color: #617b99; border: 0;
+                       border-bottom: 1px solid #d9e4f2; padding: 8px; font-weight: 600; }
+QTableView::item:alternate, QTableWidget::item:alternate { background: #f7f9fd; }
+QStatusBar { background: #f1f5fb; color: #71879f; }
+"""
+
 
 class NetworkMark(QWidget):
     """A small network illustration for the application's start panel."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setMinimumSize(220, 120)
-        self.setMaximumHeight(150)
+        self.setMinimumSize(260, 210)
+        self.setMaximumHeight(380)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -71,6 +111,15 @@ class NetworkMark(QWidget):
             painter.setBrush(QBrush(color))
             painter.setPen(QPen(Qt.GlobalColor.white, 3))
             painter.drawEllipse(point, 10 if index == 2 else 8, 10 if index == 2 else 8)
+        painter.setPen(QPen(QColor("#4779a8"), 1))
+        center = QPointF(self.width() * .5, self.height() * .52)
+        for angle in (0, 50, -50):
+            painter.save()
+            painter.translate(center)
+            painter.rotate(angle)
+            painter.drawEllipse(QRectF(-self.width() * .35, -self.height() * .24,
+                                      self.width() * .7, self.height() * .48))
+            painter.restore()
         painter.end()
 
 
@@ -472,7 +521,28 @@ class AssessmentDialog(QWidget):
         self.experiment = experiment
         self.setWindowTitle("Результат оценки")
         self.resize(1350, 820)
+        self.setObjectName("workspacePage")
+        self.setStyleSheet(UI_STYLESHEET)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(9)
+        masthead = QFrame()
+        masthead.setObjectName("masthead")
+        masthead.setFixedHeight(56)
+        masthead_layout = QHBoxLayout(masthead)
+        masthead_layout.setContentsMargins(32, 0, 32, 0)
+        brand = QLabel("ОЦЕНКА МАРШРУТИЗАЦИИ")
+        brand.setObjectName("brand")
+        masthead_layout.addWidget(brand)
+        masthead_layout.addStretch()
+        code = QLabel("П06")
+        code.setObjectName("pageCode")
+        masthead_layout.addWidget(code)
+        layout.addWidget(masthead)
+        heading = QLabel("Результаты текущего эксперимента")
+        heading.setObjectName("pageTitle")
+        heading.setContentsMargins(28, 9, 28, 0)
+        layout.addWidget(heading)
         integral = payload.get("integral", {})
         total = integral.get("value")
         state = "сохранён" if saved else "рассчитан, но не сохранён"
@@ -496,11 +566,32 @@ class AssessmentDialog(QWidget):
             f"Итог: {_display_number(total) if total is not None else integral.get('status', 'неизвестно')} баллов из 100 · {state}"
         )
         context_label = QLabel("\n".join(context_lines))
+        context_label.setWordWrap(True)
         if total is not None:
             context_label.setToolTip(f"Полная десятичная точность I(A): {total}")
-        layout.addWidget(context_label)
+        summary_strip = QHBoxLayout()
+        score_card = QFrame()
+        score_card.setObjectName("contentCard")
+        score_layout = QVBoxLayout(score_card)
+        score_layout.setContentsMargins(22, 12, 22, 12)
+        score_caption = QLabel("Интегральная оценка I(A)")
+        score_caption.setObjectName("cardDescription")
+        score_layout.addWidget(score_caption)
+        score_value = QLabel(_display_number(total) if total is not None else integral.get("status", "—"))
+        score_value.setObjectName("scoreValue")
+        score_layout.addWidget(score_value)
+        score_layout.addWidget(QLabel("из 100 баллов" if total is not None else "значение не определено"))
+        summary_strip.addWidget(score_card, 1)
+        context_card = QFrame()
+        context_card.setObjectName("contentCard")
+        context_card_layout = QVBoxLayout(context_card)
+        context_card_layout.setContentsMargins(22, 14, 22, 14)
+        context_card_layout.addWidget(context_label)
+        summary_strip.addWidget(context_card, 3)
+        layout.addLayout(summary_strip)
         tabs = QTabWidget()
-        layout.addWidget(tabs)
+        tabs.setContentsMargins(24, 0, 24, 0)
+        layout.addWidget(tabs, 1)
         summary = QWidget()
         summary_layout = QVBoxLayout(summary)
         table = QTableWidget(0, 10)
@@ -1287,9 +1378,12 @@ class MainWindow(QMainWindow):
         self.pending_import: Experiment | None = None
         self.setWindowTitle("OPD — подготовка и оценка опыта")
         self.resize(1300, 850)
+        self.setStyleSheet(UI_STYLESHEET)
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
         self.pages = QStackedWidget()
         root_layout.addWidget(self.pages)
         self.start_page = self._navigation_page(
@@ -1342,12 +1436,63 @@ class MainWindow(QMainWindow):
                 ("Вернуться к экспериментам", self.show_experiments),
             ), extra_widget=self.series_complete_summary,
         )
+        help_text = QLabel(
+            "1. Подготовьте один опыт: загрузите четыре файла или заполните те же сведения вручную.\n\n"
+            "2. Выберите профиль оценивания Ω со шкалами и весами.\n\n"
+            "3. Проверьте данные и запустите расчёт К0–К2.\n\n"
+            "4. Просмотрите таблицу, радар, сравнение, диаграмму Ганта и пояснения.\n\n"
+            "5. Сохраните результат; затем его можно открыть из истории без повторного расчёта."
+        )
+        help_text.setWordWrap(True)
+        self.help_page = self._navigation_page(
+            "Справка по работе с программой", "Один эксперимент — один набор наблюдений",
+            (("Назад в главное меню", self.show_main_menu),), extra_widget=help_text,
+        )
+        about_text = QLabel(
+            "Комплексная оценка эффективности алгоритмов маршрутизации в многоспутниковых системах связи.\n\n"
+            "Основа расчёта — математическая модель главы 3 ТЗ-ОАМ-01.\n"
+            "Программа оценивает готовые наблюдения; первичные данные создаются вне приложения."
+        )
+        about_text.setWordWrap(True)
+        self.about_page = self._navigation_page(
+            "О программе", "Сведения о назначении и математической основе",
+            (("Назад в главное меню", self.show_main_menu),), extra_widget=about_text,
+        )
         for page in (self.start_page, self.main_menu_page, self.experiments_page,
-                     self.input_page, self.import_preview_page, self.results_page, self.series_complete_page):
+                     self.input_page, self.import_preview_page, self.results_page, self.series_complete_page,
+                     self.help_page, self.about_page):
             self.pages.addWidget(page)
         self.editor_page = QWidget()
+        self.editor_page.setObjectName("workspacePage")
         self.pages.addWidget(self.editor_page)
         layout = QVBoxLayout(self.editor_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        editor_masthead = QFrame()
+        editor_masthead.setObjectName("masthead")
+        editor_masthead.setFixedHeight(56)
+        editor_masthead_layout = QHBoxLayout(editor_masthead)
+        editor_masthead_layout.setContentsMargins(32, 0, 32, 0)
+        editor_brand = QLabel("ОЦЕНКА МАРШРУТИЗАЦИИ")
+        editor_brand.setObjectName("brand")
+        editor_masthead_layout.addWidget(editor_brand)
+        editor_masthead_layout.addStretch()
+        editor_code = QLabel("П05")
+        editor_code.setObjectName("pageCode")
+        editor_masthead_layout.addWidget(editor_code)
+        layout.addWidget(editor_masthead)
+        editor_heading = QLabel("Редактор исходных данных")
+        editor_heading.setObjectName("pageTitle")
+        editor_heading.setContentsMargins(30, 10, 30, 0)
+        layout.addWidget(editor_heading)
+        editor_subtitle = QLabel("Единые формы для импортированного комплекта и ручного ввода")
+        editor_subtitle.setObjectName("pageSubtitle")
+        editor_subtitle.setContentsMargins(30, 0, 30, 4)
+        layout.addWidget(editor_subtitle)
+        toolbar_panel = QFrame()
+        toolbar_panel.setObjectName("contentCard")
+        toolbar_layout = QVBoxLayout(toolbar_panel)
+        toolbar_layout.setContentsMargins(14, 12, 14, 12)
         for buttons in (
             (("К разделу экспериментов", self.back_to_experiments),
              ("Новый", self.new), ("Импорт 4 файлов", self.import_folder),
@@ -1362,13 +1507,15 @@ class MainWindow(QMainWindow):
                 button = QPushButton(label)
                 button.clicked.connect(callback)
                 toolbar.addWidget(button)
-            layout.addLayout(toolbar)
+            toolbar_layout.addLayout(toolbar)
+        layout.addWidget(toolbar_panel)
         self.retry_button = QPushButton("Повторить сохранение результата")
         self.retry_button.setEnabled(False)
         self.retry_button.clicked.connect(self.retry_assessment_save)
-        layout.addWidget(self.retry_button)
+        toolbar_layout.addWidget(self.retry_button)
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
+        self.tabs.setContentsMargins(24, 0, 24, 0)
+        layout.addWidget(self.tabs, 1)
         self.passport = PassportEditor(empty_passport())
         self.tabs.addTab(self.passport, "Паспорт и условия")
         self.tables = {}
@@ -1383,15 +1530,21 @@ class MainWindow(QMainWindow):
         for editor in self.tables.values():
             editor.changed.connect(self.mark_input_dirty)
         editor_actions = QHBoxLayout()
+        editor_actions.setContentsMargins(24, 8, 24, 8)
         for label, callback in (("Назад", self.back_to_experiments),
                                 ("Добавить следующий эксперимент", self.next_experiment),
                                 ("Сохранить черновик", self.save_draft),
                                 ("Проверить данные", self.check),
                                 ("Запуск расчёта", self.run_assessment)):
             button = QPushButton(label)
+            if label == "Запуск расчёта":
+                button.setProperty("variant", "primary")
             button.clicked.connect(callback)
             editor_actions.addWidget(button)
-        layout.addLayout(editor_actions)
+        editor_footer = QFrame()
+        editor_footer.setObjectName("footerBar")
+        editor_footer.setLayout(editor_actions)
+        layout.addWidget(editor_footer)
         self.statusBar().showMessage("Новый черновик. Пустые наблюдения не создаются автоматически.")
         self.pages.setCurrentWidget(self.start_page)
 
@@ -1399,23 +1552,170 @@ class MainWindow(QMainWindow):
                          buttons: tuple[tuple[str, Any], ...],
                          extra_widget: QWidget | None = None) -> QWidget:
         page = QWidget()
+        page.setObjectName("startPage" if title == "OPD" else "workspacePage")
         layout = QVBoxLayout(page)
-        layout.addStretch(1)
-        heading = QLabel(title)
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet("font-size: 30px; font-weight: 600; color: #203040;")
-        layout.addWidget(heading)
-        description = QLabel(subtitle)
-        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(description)
-        if extra_widget is not None:
-            layout.addWidget(extra_widget)
-        for label, callback in buttons:
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        def action(label: str, callback: Any, primary: bool = False) -> QPushButton:
             button = QPushButton(label)
-            button.setMinimumHeight(42)
+            button.setMinimumHeight(44)
+            if primary:
+                button.setProperty("variant", "primary")
             button.clicked.connect(callback)
-            layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addStretch(2)
+            return button
+
+        if title == "OPD":
+            hero = QHBoxLayout()
+            hero.setContentsMargins(64, 55, 64, 55)
+            copy = QVBoxLayout()
+            copy.addStretch()
+            eyebrow = QLabel("НАСТОЛЬНАЯ ПРОГРАММА")
+            eyebrow.setObjectName("heroEyebrow")
+            copy.addWidget(eyebrow)
+            heading = QLabel("ОЦЕНКА\nМАРШРУТИЗАЦИИ")
+            heading.setObjectName("heroTitle")
+            copy.addWidget(heading)
+            description = QLabel("Комплексная оценка эффективности алгоритмов маршрутизации\n"
+                                 "в многоспутниковых системах связи")
+            description.setObjectName("heroSubtitle")
+            description.setWordWrap(True)
+            copy.addWidget(description)
+            copy.addSpacing(35)
+            start = action(*buttons[0], primary=True)
+            start.setMinimumWidth(250)
+            copy.addWidget(start, alignment=Qt.AlignmentFlag.AlignLeft)
+            copy.addStretch()
+            hero.addLayout(copy, 3)
+            if extra_widget is not None:
+                hero.addWidget(extra_widget, 2)
+            layout.addLayout(hero, 1)
+            return page
+
+        codes = {"Главное меню": "П02", "Эксперименты": "П03", "Новый опыт": "П04",
+                 "Состав импортированного комплекта": "П04а", "Результаты и черновики": "П07",
+                 "Серия завершена": "Д05", "Справка по работе с программой": "С01",
+                 "О программе": "С02"}
+        masthead = QFrame()
+        masthead.setObjectName("masthead")
+        masthead.setFixedHeight(56)
+        masthead_layout = QHBoxLayout(masthead)
+        masthead_layout.setContentsMargins(32, 0, 32, 0)
+        brand = QLabel("ОЦЕНКА МАРШРУТИЗАЦИИ")
+        brand.setObjectName("brand")
+        masthead_layout.addWidget(brand)
+        masthead_layout.addStretch()
+        code = QLabel(codes.get(title, ""))
+        code.setObjectName("pageCode")
+        masthead_layout.addWidget(code)
+        layout.addWidget(masthead)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(42, 25, 42, 24)
+        body_layout.setSpacing(12)
+        display_title = "Подготовка нового эксперимента" if title == "Новый опыт" else title
+        heading = QLabel(display_title)
+        heading.setObjectName("pageTitle")
+        body_layout.addWidget(heading)
+        description = QLabel(subtitle)
+        description.setObjectName("pageSubtitle")
+        body_layout.addWidget(description)
+        body_layout.addSpacing(14)
+
+        footer_actions = [(label, callback) for label, callback in buttons
+                          if label.startswith("Назад")]
+        main_actions = [(label, callback) for label, callback in buttons
+                        if not label.startswith("Назад")]
+        if title in ("Эксперименты", "Новый опыт"):
+            details = {
+                "Начать новый эксперимент": ("Новый эксперимент", "Подготовить новый набор наблюдений из четырёх файлов ПАК или через ручные формы."),
+                "Продолжить предыдущий": ("Продолжить работу", "Открыть сохранённый черновик или продолжить ранее начатую серию."),
+                "Просмотреть результаты": ("Посмотреть результаты", "Открыть рассчитанный опыт или серию без повторного расчёта."),
+                "Загрузить четыре файла": ("Загрузить четыре файла", "experiment.json, packets.csv, routes.csv и channels.csv."),
+                "Открыть пустые формы": ("Ввести данные вручную", "Заполнить полный паспорт, пакеты, маршруты и каналы в общем редакторе."),
+            }
+            grid = QGridLayout()
+            grid.setSpacing(18)
+            for index, (label, callback) in enumerate(main_actions):
+                card = QFrame()
+                card.setObjectName("contentCard")
+                card_layout = QVBoxLayout(card)
+                card_layout.setContentsMargins(24, 24, 24, 24)
+                card_layout.setSpacing(14)
+                card_title, card_text = details[label]
+                card_heading = QLabel(card_title)
+                card_heading.setObjectName("cardTitle")
+                card_layout.addWidget(card_heading)
+                card_description = QLabel(card_text)
+                card_description.setObjectName("cardDescription")
+                card_description.setWordWrap(True)
+                card_layout.addWidget(card_description)
+                card_layout.addStretch()
+                card_layout.addWidget(action(label, callback, primary=index == 0))
+                grid.addWidget(card, 0, index)
+            body_layout.addLayout(grid)
+            note = QLabel(
+                "Новые эксперименты сохраняются отдельно. Предыдущие данные, параметры и результаты доступны в истории."
+                if title == "Эксперименты" else
+                "Оба способа открывают один редактор. Число записей определяется исходным опытом."
+            )
+            note.setObjectName("infoNote")
+            note.setWordWrap(True)
+            body_layout.addWidget(note)
+            body_layout.addStretch()
+        else:
+            card = QFrame()
+            card.setObjectName("contentCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(30, 28, 30, 28)
+            card_layout.setSpacing(16)
+            card_layout.addStretch()
+            if extra_widget is not None:
+                card_layout.addWidget(extra_widget)
+            if title == "Главное меню":
+                card.setMaximumWidth(760)
+                card.setMaximumHeight(500)
+                menu_title = QLabel("Комплексная оценка алгоритмов")
+                menu_title.setObjectName("cardTitle")
+                menu_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                card_layout.addWidget(menu_title)
+                menu_description = QLabel("Исходные данные → расчёт → результаты")
+                menu_description.setObjectName("cardDescription")
+                menu_description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                card_layout.addWidget(menu_description)
+            if title == "Главное меню":
+                menu_actions = dict(main_actions)
+                primary = action("Эксперименты", menu_actions["Эксперименты"], primary=True)
+                primary.setMinimumWidth(450)
+                card_layout.addWidget(primary, alignment=Qt.AlignmentFlag.AlignHCenter)
+                secondary = QHBoxLayout()
+                for label in ("Справка", "О программе"):
+                    secondary.addWidget(action(label, menu_actions[label]))
+                card_layout.addLayout(secondary)
+                card_layout.addWidget(action("Выход", menu_actions["Выход"]))
+            else:
+                for index, (label, callback) in enumerate(main_actions):
+                    button = action(label, callback, primary=index == 0)
+                    button.setMinimumWidth(240)
+                    card_layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignHCenter)
+            card_layout.addStretch()
+            if title == "Главное меню":
+                body_layout.addWidget(card, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+            else:
+                body_layout.addWidget(card, 1)
+        layout.addWidget(body, 1)
+
+        footer = QFrame()
+        footer.setObjectName("footerBar")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(42, 9, 42, 9)
+        if title == "Главное меню":
+            footer_actions.append(("К титульной панели", lambda: self.pages.setCurrentWidget(self.start_page)))
+        for label, callback in footer_actions:
+            footer_layout.addWidget(action(label, callback))
+        footer_layout.addStretch()
+        layout.addWidget(footer)
         return page
 
     def show_main_menu(self) -> None:
@@ -1431,14 +1731,10 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.editor_page)
 
     def show_help(self) -> None:
-        QMessageBox.information(
-            self, "Справка",
-            "Создайте опыт вручную или загрузите четыре файла PAK_ROUTING_EXPORT_4F 1.0.0. "
-            "Задайте профиль Ω, проверьте данные и запустите оценку К0–К2.",
-        )
+        self.pages.setCurrentWidget(self.help_page)
 
     def show_about(self) -> None:
-        QMessageBox.information(self, "О программе", "OPD — настольная программа оценки алгоритмов маршрутизации.")
+        self.pages.setCurrentWidget(self.about_page)
 
     def back_to_experiments(self) -> None:
         if self._confirm_leave():

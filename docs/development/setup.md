@@ -13,6 +13,16 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 
 На Windows использовать `.venv\Scripts\python.exe` и `.venv\Scripts\opd.exe`; переменная `QT_QPA_PLATFORM=offscreen` нужна только для автоматической проверки GUI без экрана. Для исходного кода без установки пакета можно указать `PYTHONPATH=src` и запустить `python -m scanner.cli` или `python -m scanner.gui`.
 
+Если Python установлен через **MSYS2 UCRT64**, команда `pip install -e '.[test]'` не найдёт официальный wheel `PySide6_Essentials==6.12.0`: MSYS2 Python использует несовместимый с wheel PyPI ABI. Проверенный пользователем 26.10.2026 способ запуска из исходников — открыть терминал MSYS2 UCRT64 и выполнить:
+
+```bash
+pacman -S mingw-w64-ucrt-x86_64-pyside6
+cd /c/path/to/OPD  # заменить на путь к своему каталогу
+PYTHONPATH=src /ucrt64/bin/python -m scanner.gui
+```
+
+Пакет MSYS2 PySide6 версии 6.12.0 включает Qt Widgets. Этот способ проверен только на запуск GUI в пользовательской Windows 11; сборка `.exe` и полный набор испытаний на Windows ещё не выполнялись. Для стандартной установки через `pip` требуется обычная сборка CPython для Windows x64, а не Python из MSYS2.
+
 Команды CLI:
 
 ```text

@@ -145,7 +145,7 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
         f"{payload['metrics'][key].get('symbol', key)} ({key})" for key in metric_order
     ]
     labels = [label.text() for label in dialog.findChildren(QLabel)]
-    context = labels[0]
+    context = next(label for label in labels if label.startswith("Опыт:"))
     assert all(part in context for part in ("Алгоритм:", "сеть:", "сценарий:", "повтор:",
                                              "источник:", "Ω:", "вход v1", "баллов из 100"))
     assert experiment.experiment_id in context and payload["model_version"] in context
@@ -278,7 +278,7 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert mark is not None and mark.grab().width() >= 220
     assert window.findChildren(QPushButton)
     assert {button.text() for button in window.main_menu_page.findChildren(QPushButton)} == {
-        "Эксперименты", "Справка", "О программе", "Выход",
+        "Эксперименты", "Справка", "О программе", "Выход", "К титульной панели",
     }
     assert {button.text() for button in window.editor_page.findChildren(QPushButton)}.issuperset({
         "Назад", "Сохранить черновик", "Проверить данные", "Запуск расчёта",
@@ -290,6 +290,12 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
 
     click(window.start_page, "Начать")
     assert window.pages.currentWidget() is window.main_menu_page
+    click(window.main_menu_page, "Справка")
+    assert window.pages.currentWidget() is window.help_page
+    click(window.help_page, "Назад в главное меню")
+    click(window.main_menu_page, "О программе")
+    assert window.pages.currentWidget() is window.about_page
+    click(window.about_page, "Назад в главное меню")
     click(window.main_menu_page, "Эксперименты")
     assert window.pages.currentWidget() is window.experiments_page
     click(window.experiments_page, "Начать новый эксперимент")

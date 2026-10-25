@@ -13,8 +13,9 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QInputDial
 
 from scanner.core import calculate
 from scanner.core.dispatcher import calculate_and_save
+import scanner.gui as gui_module
 from scanner.gui import (
-    AssessmentDialog, MainWindow, NetworkMark, PassportEditor, SeriesManagerDialog, TableEditor,
+    AssessmentDialog, AssessmentWorker, MainWindow, NetworkMark, PassportEditor, SeriesManagerDialog, TableEditor,
 )
 from scanner.io.format import read_folder
 
@@ -465,7 +466,7 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
 
 
 def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     app = QApplication.instance() or QApplication([])
     with ZipFile(CONTROL_ARCHIVE) as archive:
@@ -493,22 +494,45 @@ def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
     window = MainWindow(tmp_path / "next-experiment.sqlite3")
     series_id = window.store.create_series("Два синтетических опыта")
     window.active_series_id = series_id
+    progress_messages: list[str] = []
+    start_worker = AssessmentWorker.start
+
+    def start_and_observe(worker: AssessmentWorker) -> None:
+        worker.progress.connect(progress_messages.append)
+        start_worker(worker)
+
+    monkeypatch.setattr(AssessmentWorker, "start", start_and_observe)
+    run_calculation = gui_module.calculate_and_save
+
+    def slow_calculation(*args, progress=None, **kwargs):
+        def report(message: str) -> None:
+            if progress is not None:
+                progress(message)
+            time.sleep(0.015)
+
+        return run_calculation(*args, progress=report, **kwargs)
+
+    monkeypatch.setattr(gui_module, "calculate_and_save", slow_calculation)
+    progress_labels: list[str] = []
 
     def run_and_wait(experiment) -> None:
         window._set_experiment(experiment, profile)
         window.run_assessment()
         worker = window.assessment_worker
         assert worker is not None
-        assert worker.wait(10_000)
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 10
         while window.assessment_worker is not None and time.monotonic() < deadline:
             app.processEvents()
+            if window.progress_dialog is not None:
+                progress_labels.append(window.progress_dialog.labelText())
             time.sleep(0.01)
         app.processEvents()
         assert window.assessment_worker is None
         assert window.assessment_panel is not None
         assert window.pages.currentWidget() is window.assessment_panel
         assert window.assessment_panel.payload["assessment_id"]
+        labels = [label.text() for label in window.assessment_panel.findChildren(QLabel)]
+        assert any("Демонстрационный профиль Ω" in label for label in labels)
 
     run_and_wait(first)
     first_id = window.assessment_panel.payload["assessment_id"]
@@ -540,6 +564,96 @@ def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
                for row in experiment_first.tables["packets.csv"])
     assert all(row["experiment_id"] == second.experiment_id
                for row in experiment_second.tables["packets.csv"])
+    assert {"Подготовка модели К0", "Расчёт показателей К1", "Оценивание К2"}.issubset(progress_messages)
+    assert {"Подготовка модели К0", "Расчёт показателей К1", "Оценивание К2"}.issubset(set(progress_labels))
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_gui_validation_error_returns_to_editor_without_saving_result(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(tmp_path / "validation-error.sqlite3")
+    window._set_experiment(read_folder(reference_folder), {})
+    window.show_editor()
+    errors: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "critical",
+        lambda _parent, _title, message, *_args, **_kwargs: errors.append(str(message)),
+    )
+
+    window.run_assessment()
+    worker = window.assessment_worker
+    assert worker is not None and worker.wait(10_000)
+    deadline = time.monotonic() + 5
+    while window.assessment_worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+    assert window.assessment_worker is None
+    assert window.pages.currentWidget() is window.editor_page
+    assert window.store.list_assessments() == []
+    assert errors and "profile_id" in errors[0]
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_gui_result_write_retry_reuses_calculated_payload(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    with ZipFile(CONTROL_ARCHIVE) as archive:
+        profile_name = next(name for name in archive.namelist() if name.endswith("support/profile_demo.json"))
+        profile = json.loads(archive.read(profile_name))
+    window = MainWindow(tmp_path / "gui-retry.sqlite3")
+    window._set_experiment(read_folder(reference_folder), profile)
+    window.show_editor()
+    original_calculate_and_save = __import__("scanner.gui", fromlist=["calculate_and_save"]).calculate_and_save
+    calculations = 0
+
+    def count_calculation(*args, **kwargs):
+        nonlocal calculations
+        calculations += 1
+        return original_calculate_and_save(*args, **kwargs)
+
+    monkeypatch.setattr("scanner.gui.calculate_and_save", count_calculation)
+    original_save = window.store.save_assessment
+    writes = 0
+
+    def fail_first_write(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            raise OSError("temporary test storage failure")
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(window.store, "save_assessment", fail_first_write)
+    monkeypatch.setattr(
+        QMessageBox, "critical",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Close,
+    )
+
+    window.run_assessment()
+    worker = window.assessment_worker
+    assert worker is not None and worker.wait(10_000)
+    deadline = time.monotonic() + 5
+    while window.assessment_worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+    assert window.unsaved_assessment is not None
+    assert window.retry_button.isEnabled()
+    assert window.pages.currentWidget() is window.assessment_panel
+    assert calculations == 1 and writes == 1
+    window.retry_assessment_save()
+    assert window.unsaved_assessment is None
+    assert calculations == 1 and writes == 2
+    assert len(window.store.list_assessments()) == 1
     window.close()
     window.deleteLater()
     app.processEvents()

@@ -9,7 +9,7 @@ from zipfile import ZipFile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QInputDialog, QTableWidget, QTabWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QInputDialog, QLabel, QTableWidget, QTabWidget
 
 from scanner.core import calculate
 from scanner.core.dispatcher import calculate_and_save
@@ -440,6 +440,8 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
     assert window.saved_results.count() == 1
 
     def add_selected_to_series(dialog: SeriesManagerDialog) -> int:
+        labels = [label.text() for label in dialog.findChildren(QLabel)]
+        assert any("копия входного набора не является независимым" in text for text in labels)
         dialog.series_combo.setCurrentIndex(dialog.series_combo.findData(series_id))
         dialog.assessment_combo.setCurrentIndex(dialog.assessment_combo.findData(result_id))
         dialog.add_assessment()

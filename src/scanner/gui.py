@@ -708,7 +708,10 @@ class SeriesManagerDialog(QDialog):
         self.setWindowTitle("Серии экспериментов")
         self.resize(720, 360)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Серия объединяет сохранённые оценки. Закрытие серии не удаляет записи и не пересчитывает их."))
+        layout.addWidget(QLabel(
+            "Серия объединяет сохранённые оценки; копия входного набора не является независимым "
+            "статистическим повтором. Закрытие серии не удаляет записи и не пересчитывает их."
+        ))
         layout.addWidget(QLabel("Серия:"))
         self.series_combo = QComboBox()
         layout.addWidget(self.series_combo)

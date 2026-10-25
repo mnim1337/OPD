@@ -7,10 +7,10 @@ from zipfile import ZipFile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QTableWidget, QTabWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QTableWidget, QTabWidget
 
 from scanner.core import calculate
-from scanner.gui import AssessmentDialog, MainWindow
+from scanner.gui import AssessmentDialog, MainWindow, SeriesManagerDialog
 from scanner.io.format import read_folder
 
 
@@ -88,7 +88,7 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     app.processEvents()
 
 
-def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path) -> None:
+def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow(tmp_path / "drafts.sqlite3")
     assert window.pages.currentWidget() is window.start_page
@@ -100,7 +100,26 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path) -
     assert window.pages.currentWidget() is window.input_page
     window.new()
     assert window.pages.currentWidget() is window.editor_page
+    series_id = window.store.create_series("Продолжение опыта")
+    window.active_series_id = series_id
+    window.draft_id = "before-next"
+    window.dirty = True
+    window.next_experiment()
+    assert window.pages.currentWidget() is window.input_page
+    assert any(row[0] == "before-next" for row in window.store.list_drafts())
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
+    manager = SeriesManagerDialog(window.store, window)
+    manager.series_combo.setCurrentIndex(manager.series_combo.findData(series_id))
+    manager.close_series()
+    assert window.pages.currentWidget() is window.series_complete_page
+    assert "сохранено оценок — 0" in window.series_complete_summary.text()
     window.show_saved_results()
+    assert window.pages.currentWidget() is window.results_page
+    window.show_assessment({"experiment_id": "display-only", "metrics": {}, "groups": {},
+                            "integral": {"status": "unknown", "value": None}, "warnings": []},
+                           True)
+    assert window.pages.currentWidget() is window.assessment_panel
+    window.close_assessment()
     assert window.pages.currentWidget() is window.results_page
     window.close()
     window.deleteLater()

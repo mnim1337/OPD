@@ -366,7 +366,7 @@ class TimelineChart(QWidget):
         painter.end()
 
 
-class AssessmentDialog(QDialog):
+class AssessmentDialog(QWidget):
     def __init__(self, payload: dict[str, Any], saved: bool, experiment: Experiment | None = None,
                  parent: QWidget | None = None):
         super().__init__(parent)
@@ -558,7 +558,8 @@ class AssessmentDialog(QDialog):
             exports.addWidget(button)
         layout.addLayout(exports)
         close = QPushButton("Закрыть")
-        close.clicked.connect(self.accept)
+        close_callback = getattr(parent, "close_assessment", None)
+        close.clicked.connect(close_callback if callable(close_callback) else self.close)
         layout.addWidget(close)
 
     def update_timeline(self) -> None:
@@ -770,9 +771,13 @@ class SeriesManagerDialog(QDialog):
         except (KeyError, OSError, sqlite3.Error) as exc:
             QMessageBox.critical(self, "Ошибка завершения", str(exc))
             return
+        closed = next((item for item in self.store.list_series() if item[0] == series_id), None)
         if self.parent_window is not None and self.parent_window.active_series_id == series_id:
             self.parent_window.active_series_id = None
         self.refresh()
+        if closed is not None and self.parent_window is not None:
+            self.accept()
+            self.parent_window.show_series_complete(closed[1], closed[3])
 
     def compare_series(self) -> None:
         series_id = self.series_combo.currentData()
@@ -1121,6 +1126,8 @@ class MainWindow(QMainWindow):
         self.cancel_requested: Event | None = None
         self.progress_dialog: QProgressDialog | None = None
         self.running_experiment: Experiment | None = None
+        self.assessment_panel: AssessmentDialog | None = None
+        self.assessment_return_page: QWidget | None = None
         self.setWindowTitle("OPD — подготовка и оценка опыта")
         self.resize(1300, 850)
         central = QWidget()
@@ -1161,8 +1168,15 @@ class MainWindow(QMainWindow):
             ),
             extra_widget=self.saved_results,
         )
+        self.series_complete_summary = QLabel()
+        self.series_complete_page = self._navigation_page(
+            "Серия завершена", "", (
+                ("Просмотреть результаты", self.show_saved_results),
+                ("Вернуться к экспериментам", self.show_experiments),
+            ), extra_widget=self.series_complete_summary,
+        )
         for page in (self.start_page, self.main_menu_page, self.experiments_page,
-                     self.input_page, self.results_page):
+                     self.input_page, self.results_page, self.series_complete_page):
             self.pages.addWidget(page)
         self.editor_page = QWidget()
         self.pages.addWidget(self.editor_page)
@@ -1203,6 +1217,7 @@ class MainWindow(QMainWindow):
             editor.changed.connect(self.mark_input_dirty)
         editor_actions = QHBoxLayout()
         for label, callback in (("Назад", self.back_to_experiments),
+                                ("Добавить следующий эксперимент", self.next_experiment),
                                 ("Сохранить черновик", self.save_draft),
                                 ("Проверить данные", self.check),
                                 ("Запуск расчёта", self.run_assessment)):
@@ -1276,6 +1291,50 @@ class MainWindow(QMainWindow):
         self.refresh_saved_results()
         self.pages.setCurrentWidget(self.results_page)
 
+    def show_series_complete(self, title: str, count: int) -> None:
+        self.series_complete_summary.setText(f"{title}: сохранено оценок — {count}")
+        self.pages.setCurrentWidget(self.series_complete_page)
+
+    def show_assessment(self, payload: dict[str, Any], saved: bool,
+                        experiment: Experiment | None = None) -> None:
+        current = self.pages.currentWidget()
+        if current is not self.assessment_panel:
+            self.assessment_return_page = current
+        if self.assessment_panel is not None:
+            self.pages.removeWidget(self.assessment_panel)
+            self.assessment_panel.deleteLater()
+        self.assessment_panel = AssessmentDialog(payload, saved, experiment, self)
+        self.pages.addWidget(self.assessment_panel)
+        self.pages.setCurrentWidget(self.assessment_panel)
+
+    def close_assessment(self) -> None:
+        if self.assessment_return_page is not None:
+            self.pages.setCurrentWidget(self.assessment_return_page)
+        else:
+            self.show_experiments()
+
+    def next_experiment(self) -> None:
+        if self.assessment_worker is not None and self.assessment_worker.isRunning():
+            QMessageBox.information(self, "Следующий эксперимент", "Дождитесь завершения текущего расчёта")
+            return
+        if self.active_series_id is None:
+            QMessageBox.information(self, "Следующий эксперимент", "Сначала создайте или активируйте серию")
+            return
+        try:
+            series = next((row for row in self.store.list_series() if row[0] == self.active_series_id), None)
+        except sqlite3.Error as exc:
+            self._error(exc)
+            return
+        if series is None or series[2] != "open":
+            self.active_series_id = None
+            QMessageBox.information(self, "Следующий эксперимент", "Активная серия закрыта или недоступна")
+            return
+        if self.dirty or self.draft_id is None:
+            if not self.save_draft():
+                return
+        self.draft_id = None
+        self.show_input_choices()
+
     def open_selected_result(self) -> None:
         assessment_id = self.saved_results.currentData()
         if assessment_id is None:
@@ -1286,7 +1345,7 @@ class MainWindow(QMainWindow):
         except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
             self._error(exc)
             return
-        AssessmentDialog(payload, True, experiment, self).exec()
+        self.show_assessment(payload, True, experiment)
 
     def mark_dirty(self) -> None:
         self.dirty = True
@@ -1511,7 +1570,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Расчёт сохранён: {assessment_id}; вход {draft_id}, версия {revision}{series_status}"
         )
-        AssessmentDialog(payload, True, experiment, self).exec()
+        self.show_assessment(payload, True, experiment)
 
     def _assessment_failed(self, exc: object) -> None:
         if isinstance(exc, CalculationCancelled):
@@ -1529,7 +1588,7 @@ class MainWindow(QMainWindow):
             if answer == QMessageBox.StandardButton.Retry:
                 self.retry_assessment_save()
             elif self.running_experiment is not None:
-                AssessmentDialog(exc.payload, False, self.running_experiment, self).exec()
+                self.show_assessment(exc.payload, False, self.running_experiment)
             return
         self._error(exc if isinstance(exc, Exception) else RuntimeError(str(exc)))
 
@@ -1562,7 +1621,7 @@ class MainWindow(QMainWindow):
         self.retry_button.setEnabled(False)
         self.statusBar().showMessage(f"Результат сохранён: {assessment_id}")
         _, experiment, _ = self.store.load_assessment(assessment_id)
-        AssessmentDialog(pending.payload, True, experiment, self).exec()
+        self.show_assessment(pending.payload, True, experiment)
 
     def open_assessment(self) -> None:
         try:
@@ -1586,7 +1645,7 @@ class MainWindow(QMainWindow):
             self._error(exc)
             return
         self.statusBar().showMessage(f"Открыт сохранённый результат {assessment_id}; повторного расчёта не было")
-        AssessmentDialog(payload, True, experiment, self).exec()
+        self.show_assessment(payload, True, experiment)
 
     def compare_assessments(self) -> None:
         try:

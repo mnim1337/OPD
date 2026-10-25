@@ -16,7 +16,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox,
+    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPlainTextEdit, QScrollArea,
     QPushButton, QProgressDialog, QTableView, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget, QFileDialog, QTableWidget, QTableWidgetItem, QStackedWidget,
@@ -1421,13 +1421,36 @@ class MainWindow(QMainWindow):
             ), extra_widget=self.import_files_table,
         )
         self.saved_results = QComboBox()
+        self.saved_results.setVisible(False)
+        self.results_search = QLineEdit()
+        self.results_search.setPlaceholderText("Поиск по опыту, модели или дате")
+        self.results_table = QTableWidget(0, 4)
+        self.results_table.setHorizontalHeaderLabels(["Опыт", "Версия входа", "Модель", "Дата сохранения"])
+        self.results_table.horizontalHeader().setStretchLastSection(True)
+        for column, width in enumerate((220, 150, 320)):
+            self.results_table.setColumnWidth(column, width)
+        self.results_table.verticalHeader().hide()
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setShowGrid(False)
+        self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.results_table.cellClicked.connect(
+            lambda row, _column: self.saved_results.setCurrentIndex(row))
+        self.results_table.itemSelectionChanged.connect(self.select_saved_result)
+        self.results_search.textChanged.connect(self.filter_saved_results)
+        results_content = QWidget()
+        results_content_layout = QVBoxLayout(results_content)
+        results_content_layout.setContentsMargins(0, 0, 0, 0)
+        results_content_layout.addWidget(self.results_search)
+        results_content_layout.addWidget(self.results_table, 1)
+        results_content_layout.addWidget(self.saved_results)
         self.results_page = self._navigation_page(
             "Результаты и черновики", "Оценки открываются без повторного расчёта; черновик можно продолжить", (
                 ("Открыть выбранную оценку", self.open_selected_result),
                 ("Продолжить черновик", self.open_draft),
                 ("Серии", self.manage_series), ("Назад", self.show_experiments),
             ),
-            extra_widget=self.saved_results,
+            extra_widget=results_content,
         )
         self.series_complete_summary = QLabel()
         self.series_complete_page = self._navigation_page(
@@ -1670,9 +1693,10 @@ class MainWindow(QMainWindow):
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(30, 28, 30, 28)
             card_layout.setSpacing(16)
-            card_layout.addStretch()
+            if title != "Результаты и черновики":
+                card_layout.addStretch()
             if extra_widget is not None:
-                card_layout.addWidget(extra_widget)
+                card_layout.addWidget(extra_widget, 1 if title == "Результаты и черновики" else 0)
             if title == "Главное меню":
                 card.setMaximumWidth(760)
                 card.setMaximumHeight(500)
@@ -1694,12 +1718,18 @@ class MainWindow(QMainWindow):
                     secondary.addWidget(action(label, menu_actions[label]))
                 card_layout.addLayout(secondary)
                 card_layout.addWidget(action("Выход", menu_actions["Выход"]))
+            elif title == "Результаты и черновики":
+                result_actions = QHBoxLayout()
+                for index, (label, callback) in enumerate(main_actions):
+                    result_actions.addWidget(action(label, callback, primary=index == 0))
+                card_layout.addLayout(result_actions)
             else:
                 for index, (label, callback) in enumerate(main_actions):
                     button = action(label, callback, primary=index == 0)
                     button.setMinimumWidth(240)
                     card_layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignHCenter)
-            card_layout.addStretch()
+            if title != "Результаты и черновики":
+                card_layout.addStretch()
             if title == "Главное меню":
                 body_layout.addWidget(card, 1, alignment=Qt.AlignmentFlag.AlignCenter)
             else:
@@ -1742,13 +1772,43 @@ class MainWindow(QMainWindow):
 
     def refresh_saved_results(self) -> None:
         self.saved_results.clear()
+        self.results_table.setRowCount(0)
         try:
             for assessment_id, draft_id, revision, model, stamp in self.store.list_assessments():
                 self.saved_results.addItem(
                     f"{draft_id}, вход v{revision}, {model}, {stamp}", assessment_id,
                 )
+                row = self.results_table.rowCount()
+                self.results_table.insertRow(row)
+                display_stamp = stamp[:19].replace("T", " ") + (" UTC" if stamp.endswith("+00:00") else "")
+                for column, value in enumerate((draft_id, f"v{revision}", model, display_stamp)):
+                    self.results_table.setItem(row, column, QTableWidgetItem(str(value)))
+                self.results_table.setRowHeight(row, 36)
+            if self.results_table.rowCount():
+                self.results_table.selectRow(0)
+            self.filter_saved_results(self.results_search.text())
         except sqlite3.Error as exc:
             self._error(exc)
+
+    def filter_saved_results(self, query: str) -> None:
+        needle = query.casefold().strip()
+        for row in range(self.results_table.rowCount()):
+            visible = any(needle in self.results_table.item(row, column).text().casefold()
+                          for column in range(self.results_table.columnCount()))
+            self.results_table.setRowHidden(row, not visible)
+        selected = next((row for row in range(self.results_table.rowCount())
+                         if not self.results_table.isRowHidden(row)), -1)
+        if selected >= 0:
+            self.results_table.selectRow(selected)
+            self.saved_results.setCurrentIndex(selected)
+        else:
+            self.results_table.clearSelection()
+            self.saved_results.setCurrentIndex(-1)
+
+    def select_saved_result(self) -> None:
+        row = self.results_table.currentRow()
+        if row >= 0 and not self.results_table.isRowHidden(row):
+            self.saved_results.setCurrentIndex(row)
 
     def show_saved_results(self) -> None:
         self.refresh_saved_results()

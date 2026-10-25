@@ -609,6 +609,13 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
     click(window.experiments_page, "Просмотреть результаты")
     assert window.pages.currentWidget() is window.results_page
     assert window.saved_results.count() == 1
+    assert window.results_table.rowCount() == 1
+    window.results_search.setText("несуществующий опыт")
+    assert window.results_table.isRowHidden(0)
+    assert window.saved_results.currentData() is None
+    window.results_search.setText("view-this")
+    assert not window.results_table.isRowHidden(0)
+    assert window.saved_results.currentData() == result_id
 
     def add_selected_to_series(dialog: SeriesManagerDialog) -> int:
         labels = [label.text() for label in dialog.findChildren(QLabel)]

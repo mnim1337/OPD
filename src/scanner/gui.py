@@ -90,6 +90,14 @@ QStatusBar { background: #f1f5fb; color: #71879f; }
 """
 
 
+class FullWidthTabs(QTabWidget):
+    """Keep each row of tabs across the available panel width."""
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.tabBar().setFixedWidth(self.width())
+
+
 class NetworkMark(QWidget):
     """Orbital illustration for the opening panel in appendix V."""
 
@@ -615,10 +623,13 @@ class AssessmentDialog(QWidget):
         context_card_layout.addWidget(context_label)
         summary_strip.addWidget(context_card, 3)
         layout.addLayout(summary_strip)
-        tabs = QTabWidget()
-        tabs.setContentsMargins(28, 0, 28, 0)
+        tabs = FullWidthTabs()
         tabs.tabBar().setExpanding(True)
-        layout.addWidget(tabs, 1)
+        tabs_container = QWidget()
+        tabs_container_layout = QVBoxLayout(tabs_container)
+        tabs_container_layout.setContentsMargins(28, 0, 28, 0)
+        tabs_container_layout.addWidget(tabs)
+        layout.addWidget(tabs_container, 1)
         summary = QWidget()
         summary_layout = QVBoxLayout(summary)
         summary_layout.setContentsMargins(0, 8, 0, 8)
@@ -1283,7 +1294,7 @@ class PassportEditor(QWidget):
         self._array_tables: dict[tuple[str, ...], QTableWidget] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
-        self.tabs = QTabWidget()
+        self.tabs = FullWidthTabs()
         self.tabs.tabBar().setExpanding(True)
         layout.addWidget(self.tabs)
         self.set_value(value)
@@ -1393,15 +1404,26 @@ class PassportEditor(QWidget):
         return cell
 
     def _fields(self, layout: QVBoxLayout, node: dict[str, Any], path: tuple[str | int, ...],
-                keys: tuple[str, ...] | None = None) -> None:
+                keys: tuple[str, ...] | None = None, wide_keys: frozenset[str] = frozenset()) -> None:
         selected = [(key, node[key]) for key in (keys or tuple(node)) if key in node]
         scalars = [(key, value) for key, value in selected if not isinstance(value, dict)]
         if scalars:
             grid = QGridLayout()
             grid.setHorizontalSpacing(16)
             grid.setVerticalSpacing(12)
-            for index, (key, value) in enumerate(scalars):
-                grid.addWidget(self._field(key, value, path + (key,)), index // 2, index % 2)
+            row, column = 0, 0
+            for key, value in scalars:
+                field = self._field(key, value, path + (key,))
+                if key in wide_keys:
+                    if column:
+                        row, column = row + 1, 0
+                    grid.addWidget(field, row, 0, 1, 2)
+                    row += 1
+                else:
+                    grid.addWidget(field, row, column)
+                    column += 1
+                    if column == 2:
+                        row, column = row + 1, 0
             layout.addLayout(grid)
         for key, value in selected:
             if isinstance(value, dict):
@@ -1411,7 +1433,8 @@ class PassportEditor(QWidget):
                 self._fields(layout, value, path + (key,))
 
     def _card(self, parent: QVBoxLayout, title: str, node: dict[str, Any] | None,
-              path: tuple[str | int, ...], keys: tuple[str, ...] | None = None) -> None:
+              path: tuple[str | int, ...], keys: tuple[str, ...] | None = None,
+              wide_keys: frozenset[str] = frozenset()) -> None:
         card = QFrame()
         card.setObjectName("contentCard")
         content = QVBoxLayout(card)
@@ -1420,7 +1443,7 @@ class PassportEditor(QWidget):
         heading.setObjectName("cardTitle")
         content.addWidget(heading)
         if isinstance(node, dict) and node:
-            self._fields(content, node, path, keys)
+            self._fields(content, node, path, keys, wide_keys)
         else:
             content.addWidget(QLabel("Поля пока не заданы. Их можно добавить в расширенном вводе."))
         content.addStretch()
@@ -1533,8 +1556,10 @@ class PassportEditor(QWidget):
         if index == 0:
             cards = QHBoxLayout()
             self._card(cards, "Описание эксперимента", self._data, (),
-                       ("experiment_id", "repeat_id", "scenario_id", "description_ru", "data_origin"))
-            self._card(cards, "Исследуемая реализация", self._get(("algorithm",)), ("algorithm",))
+                       ("experiment_id", "repeat_id", "scenario_id", "description_ru", "data_origin"),
+                       frozenset({"scenario_id", "description_ru", "data_origin"}))
+            self._card(cards, "Исследуемая реализация", self._get(("algorithm",)), ("algorithm",),
+                       wide_keys=frozenset({"algorithm_id", "name_ru", "note_ru"}))
             layout.addLayout(cards)
         elif index == 1:
             self._card(layout, "Среда выполнения и источник", self._get(("environment",)), ("environment",))
@@ -1959,10 +1984,13 @@ class MainWindow(QMainWindow):
         self.editor_subtitle.setObjectName("pageSubtitle")
         self.editor_subtitle.setContentsMargins(30, 0, 30, 4)
         layout.addWidget(self.editor_subtitle)
-        self.tabs = QTabWidget()
-        self.tabs.setContentsMargins(30, 0, 30, 0)
+        self.tabs = FullWidthTabs()
         self.tabs.tabBar().setExpanding(True)
-        layout.addWidget(self.tabs, 1)
+        tabs_container = QWidget()
+        tabs_container_layout = QVBoxLayout(tabs_container)
+        tabs_container_layout.setContentsMargins(30, 0, 30, 0)
+        tabs_container_layout.addWidget(self.tabs)
+        layout.addWidget(tabs_container, 1)
         self.passport = PassportEditor(empty_passport())
         self.tabs.addTab(self.passport, "Паспорт и условия")
         self.tables = {}

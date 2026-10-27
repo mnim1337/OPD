@@ -214,7 +214,7 @@ def test_timeline_marks_unrecorded_model_time(reference_folder: Path) -> None:
     chart.resize(1000, max(chart.minimumHeight(), 300))
     chart.show()
     app.processEvents()
-    pixel = chart.grab().toImage().pixelColor(600, 70)
+    pixel = chart.grab().toImage().pixelColor(600, 95)
     assert pixel != QColor("white")
     chart.close()
     chart.deleteLater()
@@ -311,6 +311,11 @@ def test_explanation_tab_separates_rebuild_time_and_confirmation_window(
     assert checks[0]["check_id"] == "F01_AD01"
     assert checks[0]["time_s"] == "0.600000000"
     assert checks[0]["confirmation_window_s"] == "0.2"
+    assert dialog.findChild(QLineEdit, "actualEventTime").text() == "4,000"
+    assert dialog.findChild(QLineEdit, "newRouteTime").text() == "4,600"
+    assert "0,200 с" in dialog.findChild(QLineEdit, "confirmationCheck").text()
+    assert any("4,600 − 4,000 = 0,600 с" in label.text()
+               for label in dialog.findChildren(QLabel))
     assert any("Демонстрационный профиль Ω" in warning for warning in data["warnings"])
     dialog.close()
     dialog.deleteLater()
@@ -912,6 +917,11 @@ def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
     assert first_id != second_id
     entries = window.store.series_assessments(series_id)
     assert [entry[0] for entry in entries] == [first_id, second_id]
+    comparison_table = window.assessment_panel.findChild(QTableWidget, "comparisonSummary")
+    assert comparison_table is not None and comparison_table.rowCount() == 2
+    assert comparison_table.item(0, 0).text() == first.experiment_id
+    assert comparison_table.item(1, 0).text() == second.experiment_id
+    assert len(window.assessment_panel.series_contribution_chart.assessments) == 2
     saved_first, experiment_first, _ = window.store.load_assessment(first_id)
     saved_second, experiment_second, _ = window.store.load_assessment(second_id)
     assert experiment_first.experiment_id == saved_first["experiment_id"] == first.experiment_id

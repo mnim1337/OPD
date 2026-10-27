@@ -365,7 +365,7 @@ class ComparisonContributionChart(QWidget):
     def __init__(self, assessments: list[dict[str, Any]], parent: QWidget | None = None):
         super().__init__(parent)
         self.assessments = assessments
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(265)
         self.setMinimumWidth(500)
 
     @staticmethod
@@ -379,13 +379,20 @@ class ComparisonContributionChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), Qt.GlobalColor.white)
-        left, right = 150, max(151, self.width() - 35)
+        left, right = 145, max(146, self.width() - 55)
         width = right - left
         painter.setPen(QPen(QColor("#273444"), 1))
-        painter.drawText(QRectF(left, 4, width, 22), Qt.AlignmentFlag.AlignCenter,
-                         "Состав I(A): семь взвешенных вкладов Kᵢ(A), баллы")
+        painter.drawText(QRectF(left, 4, width, 22), Qt.AlignmentFlag.AlignRight, "I(A), баллы")
+        colors = [QColor(value) for value in (
+            "#3462A7", "#5C8BCA", "#2B8B8E", "#84A9A2", "#958AB9", "#C0956A", "#6A7E99")]
+        for tick in range(0, 101, 20):
+            x = left + width * tick / 100
+            painter.setPen(QPen(QColor("#D9E4F2"), 1))
+            painter.drawLine(QPointF(x, 30), QPointF(x, 145))
+            painter.setPen(QPen(QColor("#71879F"), 1))
+            painter.drawText(QRectF(x - 18, 146, 36, 20), Qt.AlignmentFlag.AlignCenter, str(tick))
         for row, assessment in enumerate(self.assessments[:2]):
-            y = 36 + row * 47
+            y = 53 + row * 53
             name = str(assessment.get("experiment_id", f"Опыт {row + 1}"))
             painter.drawText(QRectF(4, y, left - 10, 24), Qt.AlignmentFlag.AlignLeft,
                              name[:24])
@@ -406,7 +413,7 @@ class ComparisonContributionChart(QWidget):
                 start = left + width * min(100, lower_sum) / 100
                 end = left + width * min(100, lower_sum + low) / 100
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(CHART_COLORS[index])
+                painter.setBrush(colors[index])
                 painter.drawRect(QRectF(start, y, max(0, end - start), 22))
                 lower_sum += low
                 upper_sum += high
@@ -417,10 +424,25 @@ class ComparisonContributionChart(QWidget):
                 painter.setBrush(QBrush(QColor("#E8DDF0"), Qt.BrushStyle.BDiagPattern))
                 painter.drawRect(QRectF(start, y, max(0, end - start), 22))
             integral = assessment.get("integral", {})
-            total_text = "I=" + ComparisonDialog._show_value(integral)
+            total = self._number(integral.get("value"))
+            total_text = (f"{total:.2f}".replace(".", ",") if total is not None else
+                          _display_result(integral))
             painter.setPen(QPen(QColor("#273444"), 1))
-            painter.drawText(QRectF(left, y + 23, width, 18), Qt.AlignmentFlag.AlignLeft,
-                             total_text + ("; неизвестные вклады не масштабированы" if has_unknown else ""))
+            painter.drawText(QRectF(min(right - 66, left + min(100, lower_sum) * width / 100 + 5),
+                                    y, 66, 24),
+                             Qt.AlignmentFlag.AlignLeft, total_text)
+            if has_unknown:
+                painter.drawText(QRectF(left, y + 24, width, 18), Qt.AlignmentFlag.AlignLeft,
+                                 "Есть неизвестные вклады; полоса показывает только известную часть")
+        for index, key in enumerate(METRIC_LABELS):
+            x = 10 + (index % 4) * max(130, (self.width() - 20) / 4)
+            y = 185 + (index // 4) * 32
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(colors[index])
+            painter.drawRect(QRectF(x, y + 3, 13, 13))
+            painter.setPen(QPen(QColor("#71879F"), 1))
+            painter.drawText(QRectF(x + 20, y, 115, 21), Qt.AlignmentFlag.AlignLeft,
+                             METRIC_NAMES.get(key, key))
         painter.end()
 
 
@@ -446,18 +468,40 @@ class TimelineChart(QWidget):
 
     def _rows(self) -> list[tuple[str, str, list[dict[str, Any]]]]:
         rows = []
-        for flow_id in self.context.flows:
-            if self.flow_filter and flow_id != self.flow_filter:
+        for flow_id in (list(self.context.flows)[:2] if self.flow_filter is None else self.context.flows):
+            if self.flow_filter not in (None, "*") and flow_id != self.flow_filter:
                 continue
             rows.append(("route", flow_id, self.context.by_flow.get(flow_id, [])))
-        for link_id in self.context.links:
-            if self.link_filter and link_id != self.link_filter:
+        for link_id in (self._overview_links() if self.link_filter is None else self.context.links):
+            if self.link_filter not in (None, "*") and link_id != self.link_filter:
                 continue
             rows.append(("channel", link_id, self.context.by_link.get(link_id, [])))
         return rows
 
+    def _overview_links(self) -> list[str]:
+        """Show an affected channel and one channel used by an observed alternate path."""
+        links = list(self.context.links)
+        if len(links) <= 2:
+            return links
+        affected = [link_id for link_id in links if any(
+            row.get("link_up") is False and row.get("observation_status") == "complete"
+            for row in self.context.by_link.get(link_id, []))]
+        chosen = affected[:1]
+        for route_rows in self.context.by_flow.values():
+            paths = [set(row.get("path_links") or []) for row in route_rows
+                     if row.get("route_state") == "installed"]
+            if len(paths) < 2:
+                continue
+            alternative = next((path - paths[0] for path in paths[1:] if path != paths[0]), set())
+            candidate = next((link for link in links if link in alternative and link not in chosen), None)
+            if candidate is not None:
+                chosen.append(candidate)
+                break
+        chosen.extend(link for link in links if link not in chosen)
+        return chosen[:2]
+
     def _resize_to_rows(self) -> None:
-        self.setMinimumHeight(max(260, 95 + 31 * len(self._rows())))
+        self.setMinimumHeight(max(290, 135 + 31 * len(self._rows())))
 
     @staticmethod
     def _unobserved_intervals(segments: list[dict[str, Any]], start: float,
@@ -482,7 +526,7 @@ class TimelineChart(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), Qt.GlobalColor.white)
         left, right = 175, max(176, self.width() - 28)
-        top, lane_h = 54, 31
+        top, lane_h = 80, 31
         start, end = self.time_window
         if start >= end:
             painter.end()
@@ -495,15 +539,20 @@ class TimelineChart(QWidget):
             time_value = start + (end - start) * fraction
             painter.drawText(QRectF(x - 35, 13, 70, 22), Qt.AlignmentFlag.AlignCenter, f"{time_value:.3g} s")
         state_colors = {
-            "working": QColor("#67B88A"), "broken": QColor("#D9534F"),
-            "no_route": QColor("#89939B"), "loop": QColor("#9467BD"),
-            "up": QColor("#67B88A"), "down": QColor("#D9534F"),
+            "working": QColor("#2D62C6"), "alternate": QColor("#14847C"),
+            "broken": QColor("#AE7919"), "no_route": QColor("#B33B50"),
+            "loop": QColor("#9467BD"), "up": QColor("#77A89E"),
+            "down": QColor("#B76372"),
         }
+        first_paths = {}
+        for flow_id, route_rows in self.context.by_flow.items():
+            installed = next((row for row in route_rows if row.get("route_state") == "installed"), None)
+            first_paths[flow_id] = installed.get("path_id") if installed else None
         for index, (kind, name, segments) in enumerate(self._rows()):
             y = top + index * lane_h
             painter.setPen(QPen(QColor("#273444"), 1))
             painter.drawText(QRectF(8, y, left - 16, lane_h - 2), Qt.AlignmentFlag.AlignVCenter,
-                             f"{name} · {'маршрут' if kind == 'route' else 'канал'}")
+                             f"Поток {name}" if kind == "route" else name)
             for gap_start, gap_end in self._unobserved_intervals(segments, start, end):
                 gap_x = left + (gap_start - start) * scale
                 gap_width = (gap_end - gap_start) * scale
@@ -535,17 +584,32 @@ class TimelineChart(QWidget):
                                 if left_float >= right_float:
                                     continue
                                 state_at = self.context.physical_at(path, left_time)
-                                color = state_colors["working"] if state_at is True else \
+                                color = (state_colors["working"] if segment.get("path_id") == first_paths.get(name)
+                                         else state_colors["alternate"]) if state_at is True else \
                                     state_colors["broken"] if state_at is False else QColor("#E4C95C")
                                 painter.setPen(QPen(QColor("#FFFFFF"), .6))
                                 painter.setBrush(QBrush(color) if state_at is not None else
                                                  QBrush(color, Qt.BrushStyle.BDiagPattern))
                                 painter.drawRect(QRectF(left + (left_float - start) * scale, y + 5,
                                                         max(1, (right_float - left_float) * scale), lane_h - 10))
+                                if (right_float - left_float) * scale >= 78 and state_at is not None:
+                                    painter.setPen(QPen(QColor("#FFFFFF"), 1))
+                                    painter.drawText(QRectF(left + (left_float - start) * scale, y + 5,
+                                                            (right_float - left_float) * scale, lane_h - 10),
+                                                     Qt.AlignmentFlag.AlignCenter,
+                                                     "Исходный" if color == state_colors["working"] else
+                                                     "Другой путь" if color == state_colors["alternate"] else
+                                                     "Нарушен")
                         except (KeyError, TypeError, ValueError):
                             painter.setPen(QPen(QColor("#FFFFFF"), .6))
                             painter.setBrush(QBrush(QColor("#E4C95C"), Qt.BrushStyle.BDiagPattern))
                             painter.drawRect(QRectF(x, y + 5, w, lane_h - 10))
+                        if w >= 120:
+                            painter.setPen(QPen(QColor("#FFFFFF"), 1))
+                            painter.drawText(QRectF(x, y + 5, w, lane_h - 10),
+                                             Qt.AlignmentFlag.AlignCenter,
+                                             "Первый путь" if segment.get("path_id") == first_paths.get(name)
+                                             else "Другой путь")
                         continue
                     color = state_colors.get(state, QColor("#E4C95C"))
                     unknown = state not in state_colors
@@ -557,6 +621,12 @@ class TimelineChart(QWidget):
                 painter.setPen(QPen(QColor("#FFFFFF"), .6))
                 painter.setBrush(QBrush(color, Qt.BrushStyle.BDiagPattern) if unknown else QBrush(color))
                 painter.drawRect(QRectF(x, y + 5, w, lane_h - 10))
+                if w >= 76 and not unknown:
+                    label = ("Нет маршрута" if state == "no_route" else "Петля" if state == "loop" else "") \
+                        if kind == "route" else "Доступен" if up else "Отключён"
+                    if label:
+                        painter.setPen(QPen(QColor("#FFFFFF"), 1))
+                        painter.drawText(QRectF(x, y + 5, w, lane_h - 10), Qt.AlignmentFlag.AlignCenter, label)
         event_bottom = top + len(self._rows()) * lane_h
         for marker in self.experiment.passport.get("scenario", {}).get("events", []):
             instant = marker.get("actual_time_s")
@@ -567,11 +637,10 @@ class TimelineChart(QWidget):
                 x = left + (value - start) * scale
                 painter.setPen(QPen(QColor("#C0392B"), 2, Qt.PenStyle.DashLine))
                 painter.drawLine(QPointF(x, top - 8), QPointF(x, event_bottom))
-                painter.save()
-                painter.translate(x + 3, top - 10)
-                painter.rotate(-45)
-                painter.drawText(QPointF(0, 0), str(marker.get("event_type", "event")))
-                painter.restore()
+                event_type = {"link_down": "Отказ", "link_up": "Восстановление"}.get(
+                    marker.get("event_type"), str(marker.get("event_type", "Событие")))
+                painter.drawText(QRectF(x + 4, top - 34, 165, 22), Qt.AlignmentFlag.AlignLeft,
+                                 f"{event_type} {marker.get('event_id', '')}")
         painter.setPen(QPen(QColor("#65737E"), 1))
         painter.drawText(QRectF(left, self.height() - 25, right - left, 20),
                          Qt.AlignmentFlag.AlignCenter, "модельное время опыта")
@@ -790,7 +859,6 @@ class AssessmentDialog(QWidget):
         radar_layout.addWidget(radar_export)
         overview.addWidget(radar_panel, 2)
         summary_layout.addLayout(overview, 1)
-        self.contribution_chart = ContributionChart(payload)
         groups = payload.get("groups", {})
         group_names = {"I_1": "качество", "I_2": "ресурсы",
                        "I_3": "устойчивость/адаптивность", "I_4": "служебный обмен"}
@@ -811,79 +879,186 @@ class AssessmentDialog(QWidget):
         compare_card.setObjectName("contentCard")
         compare_card_layout = QVBoxLayout(compare_card)
         compare_card_layout.addWidget(QLabel("Сводные результаты", objectName="cardTitle"))
-        compare_table = QTableWidget(1, 5)
+        series_controls = QHBoxLayout()
+        series_combo = QComboBox()
+        series_combo.setObjectName("resultSeriesSelector")
+        first_combo = QComboBox()
+        second_combo = QComboBox()
+        for caption, combo in (("Серия", series_combo), ("Опыт 1", first_combo), ("Опыт 2", second_combo)):
+            series_controls.addWidget(QLabel(caption))
+            series_controls.addWidget(combo, 1)
+        compare_card_layout.addLayout(series_controls)
+        compare_table = QTableWidget(0, 6)
         compare_table.setObjectName("comparisonSummary")
-        compare_table.setHorizontalHeaderLabels(["Опыт", "Алгоритм", "Профиль", "Повтор", "I(A), баллы"])
+        compare_table.setHorizontalHeaderLabels(
+            ["Опыт", "Контрольный вариант", "Спутников", "Профиль", "Повтор", "I(A), баллы"])
         compare_table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((190, 285, 220, 105)):
+        for column, width in enumerate((150, 270, 105, 190, 85)):
             compare_table.setColumnWidth(column, width)
         compare_table.verticalHeader().hide()
         compare_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        algorithm_name = (experiment.passport.get("algorithm", {}).get("name_ru") if experiment else None) or "—"
-        repeat_id = (experiment.passport.get("repeat_id") if experiment else None) or "—"
-        for column, value in enumerate((payload.get("experiment_id", "—"), algorithm_name,
-                                        payload.get("profile_id", "—"), repeat_id, _display_result(integral))):
-            compare_table.setItem(0, column, QTableWidgetItem(str(value)))
-        compare_table.setMaximumHeight(105)
+        compare_table.setMaximumHeight(145)
         compare_card_layout.addWidget(compare_table)
-        compare_card_layout.addWidget(QLabel(
-            "Показан текущий сохранённый опыт. Для двух опытов выберите серию; прямое сравнение "
-            "разрешается только после проверки условий."
-        ))
+        compare_note = QLabel()
+        compare_note.setWordWrap(True)
+        compare_card_layout.addWidget(compare_note)
         compare_layout.addWidget(compare_card)
-        compare_button = QPushButton("Выбрать серию для сравнения")
-        compare_callback = getattr(parent, "manage_series", None)
-        compare_button.setEnabled(callable(compare_callback))
-        if callable(compare_callback):
-            compare_button.clicked.connect(compare_callback)
-        compare_card_layout.addWidget(compare_button)
         chart_card = QFrame()
         chart_card.setObjectName("contentCard")
         chart_card_layout = QVBoxLayout(chart_card)
         chart_card_layout.addWidget(QLabel("Горизонтальные полосы взвешенных вкладов", objectName="cardTitle"))
-        chart_card_layout.addWidget(self.contribution_chart, 1)
+        self.series_contribution_chart = ComparisonContributionChart([])
+        chart_card_layout.addWidget(self.series_contribution_chart, 1)
         compare_layout.addWidget(chart_card, 1)
+        compare_layout.addWidget(QLabel(
+            "Полосы показывают вклады в баллах. Маршруты и время перестроения — на вкладке «Диаграмма Ганта»."))
+        store = getattr(parent, "store", None)
+        if saved and store is not None:
+            try:
+                series_rows = store.list_series()
+            except (OSError, sqlite3.Error):
+                series_rows = []
+            for series_id, title, _status, count in series_rows:
+                if count >= 2:
+                    series_combo.addItem(f"{title} · {count} оценок", series_id)
+
+        def fill_series() -> None:
+            first_combo.blockSignals(True)
+            second_combo.blockSignals(True)
+            first_combo.clear()
+            second_combo.clear()
+            series_id = series_combo.currentData()
+            if series_id is not None and store is not None:
+                try:
+                    entries = store.series_assessments(series_id)
+                except (KeyError, OSError, sqlite3.Error):
+                    entries = []
+                for assessment_id, draft_id, revision, _model, _stamp in entries:
+                    label = f"{draft_id} · вход v{revision}"
+                    first_combo.addItem(label, assessment_id)
+                    second_combo.addItem(label, assessment_id)
+                if second_combo.count() > 1:
+                    second_combo.setCurrentIndex(1)
+            first_combo.blockSignals(False)
+            second_combo.blockSignals(False)
+            update_series_comparison()
+
+        def update_series_comparison() -> None:
+            compare_table.setRowCount(0)
+            self.series_contribution_chart.assessments = []
+            first_id, second_id = first_combo.currentData(), second_combo.currentData()
+            if store is None or first_id is None or second_id is None:
+                compare_note.setText("В этой серии пока нет двух сохранённых оценок для сравнения.")
+                self.series_contribution_chart.update()
+                return
+            if first_id == second_id:
+                compare_note.setText("Выберите два разных сохранённых опыта.")
+                self.series_contribution_chart.update()
+                return
+            try:
+                selected = [store.load_assessment(item_id) for item_id in (first_id, second_id)]
+            except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+                compare_note.setText(f"Не удалось открыть сохранённые оценки: {exc}")
+                self.series_contribution_chart.update()
+                return
+            for row, (item_payload, item_experiment, _profile) in enumerate(selected):
+                compare_table.insertRow(row)
+                passport = item_experiment.passport
+                nodes = passport.get("network", {}).get("nodes", [])
+                satellites = sum(node.get("node_type") == "satellite" for node in nodes)
+                values = (item_payload.get("experiment_id", "—"),
+                          passport.get("algorithm", {}).get("name_ru") or "—", satellites,
+                          item_payload.get("profile_id", "—"), passport.get("repeat_id") or "—",
+                          _display_result(item_payload.get("integral", {})))
+                for column, value in enumerate(values):
+                    compare_table.setItem(row, column, QTableWidgetItem(str(value)))
+            reasons = comparability_reasons(selected[0][1], selected[0][2],
+                                            selected[1][1], selected[1][2])
+            compare_note.setText(
+                "Условия несопоставимы; общий рейтинг не формируется: " + "; ".join(reasons)
+                if reasons else "Условия сопоставимы: сеть, нагрузка, события и профиль Ω проверены."
+            )
+            self.series_contribution_chart.assessments = [item[0] for item in selected]
+            self.series_contribution_chart.update()
+
+        series_combo.currentIndexChanged.connect(fill_series)
+        first_combo.currentIndexChanged.connect(update_series_comparison)
+        second_combo.currentIndexChanged.connect(update_series_comparison)
+        if series_combo.count():
+            active = getattr(parent, "active_series_id", None)
+            index = series_combo.findData(active)
+            series_combo.setCurrentIndex(max(index, 0))
+            fill_series()
+        else:
+            update_series_comparison()
         contributions_export = QPushButton("Сохранить вклады PNG")
         contributions_export.clicked.connect(lambda: self.export_png(
-            self.contribution_chart, "Сохранить вклады", "contributions.png"))
+            self.series_contribution_chart, "Сохранить вклады", "contributions.png"))
         compare_layout.addWidget(contributions_export)
         tabs.addTab(compare_page, "Сравнение серии")
 
         timeline_page = QWidget()
         timeline_layout = QVBoxLayout(timeline_page)
-        timeline_legend = QLabel(
-            "Состояния маршрута: зелёный — установлен и работоспособен; красный — установлен, "
-            "но нарушен; серый — нет пути; фиолетовый — петля. Жёлтая штриховка — состояние "
-            "неизвестно; бежевая штриховка — нет наблюдений. Для канала зелёный означает доступен, "
-            "красный — недоступен. Пунктирная вертикаль — фактическое событие."
+        timeline_legend = QWidget()
+        timeline_legend_layout = QGridLayout(timeline_legend)
+        timeline_legend_layout.setContentsMargins(0, 4, 0, 4)
+        legend_items = (
+            ("#2D62C6", "Первый путь"), ("#14847C", "Другой путь"),
+            ("#AE7919", "Установлен, но нарушен"), ("#B33B50", "Нет маршрута"),
+            ("#9467BD", "Петля"), ("#77A89E", "Канал доступен"),
+            ("#B76372", "Канал отключён"), ("#E4C95C", "Неизвестно"),
+            ("#F3E9D5", "Нет наблюдений"),
         )
-        timeline_legend.setWordWrap(True)
+        for index, (color, label) in enumerate(legend_items):
+            cell = QWidget()
+            cell_layout = QHBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            mark = QLabel("■")
+            mark.setStyleSheet(f"color: {color}; font-size: 17px;")
+            cell_layout.addWidget(mark)
+            cell_layout.addWidget(QLabel(label))
+            cell_layout.addStretch()
+            timeline_legend_layout.addWidget(cell, index // 5, index % 5)
         filters = QHBoxLayout()
         self.flow_filter = QComboBox()
-        self.flow_filter.addItem("Все потоки", None)
+        self.flow_filter.addItem("Обзор: первые 2 потока", None)
         self.link_filter = QComboBox()
-        self.link_filter.addItem("Все каналы", None)
+        self.link_filter.addItem("Обзор: первые 2 канала", None)
         self.event_zoom = QComboBox()
         self.event_zoom.addItem("Весь интервал", None)
         for flow_id in (experiment.passport.get("traffic", {}).get("flows", []) if experiment else []):
             self.flow_filter.addItem(str(flow_id.get("flow_id", "")), flow_id.get("flow_id"))
         for link in (experiment.passport.get("network", {}).get("links", []) if experiment else []):
             self.link_filter.addItem(str(link.get("link_id", "")), link.get("link_id"))
+        self.flow_filter.addItem("Все потоки", "*")
+        self.link_filter.addItem("Все каналы", "*")
         events = experiment.passport.get("scenario", {}).get("events", []) if experiment else []
         for item in events:
             actual = item.get("actual_time_s")
             if item.get("result") == "executed" and actual is not None:
                 self.event_zoom.addItem(f"Увеличить: {item.get('event_type')} · {actual} s", float(actual))
-        for label, combo in (("Поток", self.flow_filter), ("Канал", self.link_filter), ("Участок", self.event_zoom)):
+        for label, combo in (("Потоки", self.flow_filter), ("Каналы", self.link_filter),
+                             ("Увеличить участок события", self.event_zoom)):
             filters.addWidget(QLabel(label))
             filters.addWidget(combo)
         timeline_layout.addLayout(filters)
         self.timeline_chart = TimelineChart(experiment) if experiment is not None else None
         if self.timeline_chart is not None:
+            timeline_card = QFrame()
+            timeline_card.setObjectName("contentCard")
+            timeline_card_layout = QVBoxLayout(timeline_card)
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(self.timeline_chart)
-            timeline_layout.addWidget(scroll)
+            timeline_card_layout.addWidget(scroll, 1)
+            timeline_card_layout.addWidget(timeline_legend)
+            timeline_card_layout.addWidget(QLabel("Пунктирная вертикаль — фактическое событие; штриховка различает неизвестное состояние и отсутствие записи."))
+            context = self.timeline_chart.context
+            timeline_card_layout.addWidget(QLabel(
+                f"Модельное время: [{_display_number(context.capture_start)}; "
+                f"{_display_number(context.capture_end)}] с. "
+                "Обзор показывает первые две строки каждого типа; остальные доступны в выборе выше."))
+            timeline_layout.addWidget(timeline_card, 1)
             self.flow_filter.currentIndexChanged.connect(self.update_timeline)
             self.link_filter.currentIndexChanged.connect(self.update_timeline)
             self.event_zoom.currentIndexChanged.connect(self.update_timeline)
@@ -893,7 +1068,6 @@ class AssessmentDialog(QWidget):
             timeline_layout.addWidget(timeline_export)
         else:
             timeline_layout.addWidget(QLabel("Исходные наблюдения недоступны."))
-        timeline_layout.addWidget(timeline_legend)
         tabs.addTab(timeline_page, "Диаграмма Ганта")
 
         explanation_page = QWidget()
@@ -911,6 +1085,33 @@ class AssessmentDialog(QWidget):
         for key in metric_order:
             metric_picker.addItem(f"{METRIC_NAMES.get(key, key)} · {metrics[key].get('symbol', key)}", key)
         selected_layout.addWidget(metric_picker)
+        adaptivity_fields = QWidget()
+        adaptivity_grid = QGridLayout(adaptivity_fields)
+        adaptivity_grid.setContentsMargins(0, 12, 0, 8)
+        def result_field(label: str, row: int, column: int, span: int = 1) -> QLineEdit:
+            cell = QWidget()
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            caption = QLabel(label)
+            caption.setObjectName("fieldLabel")
+            cell_layout.addWidget(caption)
+            value = QLineEdit()
+            value.setReadOnly(True)
+            value.setStyleSheet("background: #f5f7fb; color: #71879f;")
+            cell_layout.addWidget(value)
+            adaptivity_grid.addWidget(cell, row, column, 1, span)
+            return value
+        actual_field = result_field("Фактический отказ, с", 0, 0)
+        actual_field.setObjectName("actualEventTime")
+        route_field = result_field("Начало нового пути, с", 0, 1)
+        route_field.setObjectName("newRouteTime")
+        check_field = result_field("Проверка устойчивого состояния", 1, 0, 2)
+        check_field.setObjectName("confirmationCheck")
+        adaptivity_grid.addWidget(QLabel("Подтверждение проверяется отдельно от времени перестроения."), 2, 0, 1, 2)
+        selected_layout.addWidget(adaptivity_fields)
+        adaptivity_formula = QLabel()
+        adaptivity_formula.setStyleSheet("color: #2d62c6; font-size: 23px; font-weight: 700;")
+        selected_layout.addWidget(adaptivity_formula)
         metric_explanation = QLabel()
         metric_explanation.setWordWrap(True)
         metric_explanation.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -923,12 +1124,24 @@ class AssessmentDialog(QWidget):
         context_heading = QLabel("Контекст и ограничения")
         context_heading.setObjectName("cardTitle")
         context_layout.addWidget(context_heading)
+        data_origin = (experiment.passport.get("data_origin") if experiment else payload.get("data_origin")) or "—"
+        for label, value in (
+            ("Источник", {"synthetic_reference": "Синтетический контрольный опыт"}.get(data_origin, data_origin)),
+            ("Профиль", payload.get("profile_id", "—")),
+        ):
+            caption = QLabel(label)
+            caption.setObjectName("fieldLabel")
+            context_layout.addWidget(caption)
+            field = QLineEdit(str(value))
+            field.setReadOnly(True)
+            field.setStyleSheet("background: #f5f7fb; color: #71879f;")
+            context_layout.addWidget(field)
         context_detail = QLabel(
-            f"Источник: {(experiment.passport.get('data_origin') if experiment else payload.get('data_origin')) or '—'}\n"
-            f"Профиль Ω: {payload.get('profile_id', '—')}\n"
             f"Вход v{payload.get('input_revision', '—')} · модель {payload.get('model_version', '—')}\n\n"
-            "Оценка относится к указанному варианту и условиям опыта. Балл не является вероятностью "
-            "успеха и не подтверждает выполнение всех технических требований.\n\n"
+            "Оценка относится к указанному варианту и условиям опыта. Название алгоритма "
+            "само по себе не влияет на балл. Балл не является вероятностью успеха и не подтверждает "
+            "выполнение всех технических требований.\n\n"
+            "Процессор и память не входят в служебный объём.\n\n"
             + ("Предупреждения:\n• " + "\n• ".join(warnings) if warnings else "Предупреждений нет.")
         )
         context_detail.setWordWrap(True)
@@ -941,9 +1154,12 @@ class AssessmentDialog(QWidget):
             if key is None:
                 metric_explanation.setText("Показатель не выбран.")
                 return
+            selected_heading.setText(f"Выбранный показатель: {METRIC_NAMES.get(key, key).lower()}")
             item = metrics[key]
             raw = item.get("raw", {})
             trace = item.get("trace") or {}
+            adaptivity_fields.setVisible(key == "P_ad")
+            adaptivity_formula.setVisible(key == "P_ad")
             lines = [
                 f"Исходное значение: {_display_result(raw)} {raw.get('unit', '')}",
                 f"Статус: {RESULT_STATUS_LABELS.get(raw.get('status'), raw.get('status', '—'))}",
@@ -954,13 +1170,37 @@ class AssessmentDialog(QWidget):
             if raw.get("reason"):
                 lines.append(f"Причина: {raw['reason']}")
             if key == "P_ad" and trace.get("checks"):
-                lines.append("Проверки перестроения:")
-                for check in trace["checks"]:
-                    lines.append(
-                        f"• {check.get('check_id', '—')}: перестроение {_display_number(check.get('time_s'))} с; "
-                        f"подтверждение {_display_number(check.get('confirmation_window_s'))} с отдельно"
-                    )
-                lines.append("Формулы (3.27)–(3.30). Подтверждение не прибавляется к перестроению.")
+                check = trace["checks"][0]
+                check_id = check.get("check_id")
+                check_spec = next((row for row in
+                                   (experiment.passport.get("measurement", {}).get("adaptivity", {}).get("checks", [])
+                                    if experiment else []) if row.get("check_id") == check_id), {})
+                event = next((row for row in
+                              (experiment.passport.get("scenario", {}).get("events", []) if experiment else [])
+                              if row.get("event_id") == check_spec.get("event_id")), {})
+                actual = event.get("actual_time_s") if event.get("result") == "executed" else None
+                duration = check.get("time_s") if check.get("status") == "exact" else None
+                start_time = Decimal(str(actual)) + Decimal(str(duration)) if actual is not None and duration is not None else None
+                def seconds(value: Any) -> str:
+                    return f"{Decimal(str(value)):.3f}".replace(".", ",") if value is not None else "—"
+                actual_field.setText(seconds(actual))
+                actual_field.setToolTip(f"event {event.get('event_id', '—')}")
+                route_field.setText(seconds(start_time))
+                route_field.setToolTip("Момент события + измеренное время перестроения")
+                confirmation = check.get("confirmation_window_s")
+                check_field.setText(
+                    f"{check_id}: подтверждение {seconds(confirmation)} с"
+                    if confirmation is not None else f"{check_id}: подтверждение не указано")
+                adaptivity_formula.setText(
+                    f"Pад(A) = {seconds(start_time)} − {seconds(actual)} = "
+                    f"{seconds(duration)} с" if start_time is not None else
+                    "Pад(A): точное время перестроения не определено")
+                lines = ["Формулы (3.27)–(3.30): подтверждение не прибавляется к перестроению. "
+                         "Момент получения следующего пакета не подменяет установку маршрута."]
+                if len(trace["checks"]) > 1:
+                    lines.append(f"Других проверок: {len(trace['checks']) - 1}; подробности — в технической трассе.")
+                if raw.get("reason"):
+                    lines.append(f"Причина: {raw['reason']}")
             else:
                 formula = {"P_zad": "(3.14)–(3.15)", "P_pr": "(3.16)",
                            "P_pot": "(3.17)–(3.18)", "P_bal": "(3.19)–(3.23)",

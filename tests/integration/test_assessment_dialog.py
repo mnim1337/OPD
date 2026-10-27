@@ -304,6 +304,13 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert {button.text() for button in window.main_menu_page.findChildren(QPushButton)} == {
         "Эксперименты", "Справка", "О программе", "Выход", "К титульной панели",
     }
+    for page, expected in (
+        (window.main_menu_page, "Все переходы расположены непосредственно на панели."),
+        (window.experiments_page, "Один опыт — один комплект данных"),
+        (window.input_page, "Подготовка нового эксперимента"),
+        (window.import_preview_page, "Загрузка данных ПАК"),
+    ):
+        assert any(expected in label.text() for label in page.findChildren(QLabel))
     assert {button.text() for button in window.editor_page.findChildren(QPushButton)}.issuperset({
         "Назад", "Сохранить черновик", "Проверить данные", "Запуск расчёта",
     })
@@ -328,7 +335,7 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert window.pages.currentWidget() is window.experiments_page
     click(window.experiments_page, "Начать новый эксперимент")
     assert window.pages.currentWidget() is window.input_page
-    click(window.input_page, "Открыть пустые формы")
+    click(window.input_page, "Открыть формы ввода")
     assert window.pages.currentWidget() is window.editor_page
     series_id = window.store.create_series("Продолжение опыта")
     window.active_series_id = series_id
@@ -463,14 +470,44 @@ def test_import_preview_shows_original_four_file_composition(
     app = QApplication.instance() or QApplication([])
     window = MainWindow(tmp_path / "import-preview.sqlite3")
     experiment = read_folder(reference_folder)
+    window.show_import_page()
+    assert window.pages.currentWidget() is window.import_preview_page
+    assert not window.import_open_button.isEnabled()
+    assert window.import_files_table.item(0, 2).text() == "Не выбран"
     window.show_import_preview(experiment)
     assert window.pages.currentWidget() is window.import_preview_page
     assert window.import_files_table.rowCount() == 4
-    assert window.import_files_table.item(0, 2).text()
+    assert window.import_open_button.isEnabled()
+    assert window.import_files_table.item(0, 2).text() == "Найден"
+    assert window.import_files_table.item(0, 3).text() == "—"
+    assert window.import_files_table.item(1, 3).text() == str(len(experiment.tables["packets.csv"]))
+    assert "SHA-256" in window.import_files_table.item(0, 0).toolTip()
     window.accept_import_preview()
     assert window.pages.currentWidget() is window.editor_page
     assert window.dirty and len(window.original_files) == 4
     window.dirty = False
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_import_page_keeps_missing_file_visible_without_opening(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    incomplete = tmp_path / "incomplete"
+    incomplete.mkdir()
+    for name in ("experiment.json", "packets.csv", "routes.csv"):
+        (incomplete / name).write_bytes((reference_folder / name).read_bytes())
+    window = MainWindow(tmp_path / "missing-import.sqlite3")
+    errors = []
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args: str(incomplete))
+    monkeypatch.setattr(window, "_error", errors.append)
+    window.import_folder()
+    assert errors and window.pages.currentWidget() is window.import_preview_page
+    assert window.import_path.text() == str(incomplete)
+    assert window.import_files_table.item(3, 2).text() == "Отсутствует"
+    assert not window.import_open_button.isEnabled()
     window.close()
     window.deleteLater()
     app.processEvents()
@@ -820,7 +857,7 @@ def test_next_experiment_keeps_distinct_inputs_and_results_in_same_series(
     assert window.active_series_id == series_id
 
     empty_forms = next(button for button in window.input_page.findChildren(QPushButton)
-                       if button.text() == "Открыть пустые формы")
+                       if button.text() == "Открыть формы ввода")
     empty_forms.click()
     assert window.draft_id is None
     assert all(editor.model.rowCount() == 0 for editor in window.tables.values())

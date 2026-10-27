@@ -1866,13 +1866,13 @@ class MainWindow(QMainWindow):
             extra_widget=NetworkMark(),
         )
         self.main_menu_page = self._navigation_page(
-            "Главное меню", "Выберите раздел", (
+            "Главное меню", "Выберите раздел. Все переходы расположены непосредственно на панели.", (
                 ("Эксперименты", self.show_experiments),
                 ("Справка", self.show_help), ("О программе", self.show_about), ("Выход", self.close),
             ),
         )
         self.experiments_page = self._navigation_page(
-            "Эксперименты", "Подготовка и просмотр оценок", (
+            "Эксперименты", "Один опыт — один комплект данных; серия объединяет несколько сохранённых опытов.", (
                 ("Начать новый эксперимент", self.show_input_choices),
                 ("Продолжить предыдущий", self.show_saved_results),
                 ("Просмотреть результаты", self.show_saved_results),
@@ -1880,21 +1880,54 @@ class MainWindow(QMainWindow):
             ),
         )
         self.input_page = self._navigation_page(
-            "Новый опыт", "Выберите способ ввода исходных наблюдений", (
-                ("Загрузить четыре файла", self.import_folder),
-                ("Открыть пустые формы", self.new),
+            "Новый опыт", "Новый набор сохраняется отдельной записью.", (
+                ("Выбрать комплект", self.show_import_page),
+                ("Открыть формы ввода", self.new),
                 ("Назад", self.show_experiments),
             ),
         )
-        self.import_files_table = QTableWidget(0, 3)
-        self.import_files_table.setHorizontalHeaderLabels(["Файл", "Размер, байт", "SHA-256"])
+        import_content = QWidget()
+        import_layout = QVBoxLayout(import_content)
+        import_layout.setContentsMargins(0, 0, 0, 0)
+        import_layout.addWidget(QLabel("Папка с исходным комплектом"))
+        import_picker = QHBoxLayout()
+        self.import_path = QLineEdit()
+        self.import_path.setReadOnly(True)
+        self.import_path.setPlaceholderText("Выберите папку с experiment.json и тремя CSV")
+        import_picker.addWidget(self.import_path, 1)
+        browse_import = QPushButton("Выбрать папку")
+        browse_import.clicked.connect(self.import_folder)
+        import_picker.addWidget(browse_import)
+        import_layout.addLayout(import_picker)
+        self.import_files_table = QTableWidget(4, 4)
+        self.import_files_table.setHorizontalHeaderLabels(["Файл", "Содержание", "Наличие", "Число записей"])
         self.import_files_table.horizontalHeader().setStretchLastSection(True)
-        self.import_preview_page = self._navigation_page(
-            "Состав импортированного комплекта", "Проверьте четыре исходных файла перед открытием редактора", (
-                ("Открыть редактор", self.accept_import_preview),
-                ("Назад к способам ввода", self.show_input_choices),
-            ), extra_widget=self.import_files_table,
+        self.import_files_table.verticalHeader().hide()
+        self.import_files_table.setAlternatingRowColors(True)
+        self.import_files_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.import_files_table.setMinimumHeight(270)
+        self.import_files_table.setColumnWidth(0, 160)
+        self.import_files_table.setColumnWidth(1, 480)
+        self.import_files_table.setColumnWidth(2, 110)
+        import_layout.addWidget(self.import_files_table)
+        import_note = QLabel(
+            "При выборе папки проверяются состав, формат и связи файлов. Готовность данных и профиля Ω "
+            "к расчёту проверяется отдельно. Размер и SHA-256 принятого файла доступны в подсказке к строке."
         )
+        import_note.setObjectName("infoNote")
+        import_note.setWordWrap(True)
+        import_layout.addWidget(import_note)
+        self._fill_import_table(None)
+        self.import_preview_page = self._navigation_page(
+            "Состав импортированного комплекта",
+            "Комплект одного эксперимента: один JSON и три CSV. Исходные файлы сохраняются без подмены.", (
+                ("Открыть данные", self.accept_import_preview),
+                ("Назад", self.show_input_choices),
+            ), extra_widget=import_content,
+        )
+        self.import_open_button = next(button for button in self.import_preview_page.findChildren(QPushButton)
+                                       if button.text() == "Открыть данные")
+        self.import_open_button.setEnabled(False)
         self.saved_results = QComboBox()
         self.saved_results.setVisible(False)
         self.results_search = QLineEdit()
@@ -2160,6 +2193,7 @@ class MainWindow(QMainWindow):
         body_layout.setSpacing(12)
         display_title = {
             "Новый опыт": "Подготовка нового эксперимента",
+            "Состав импортированного комплекта": "Загрузка данных ПАК",
             "Результаты и черновики": "Сохранённые эксперименты и результаты",
         }.get(title, title)
         heading = QLabel(display_title)
@@ -2176,17 +2210,18 @@ class MainWindow(QMainWindow):
                         if not label.startswith("Назад")]
         if title in ("Эксперименты", "Новый опыт"):
             details = {
-                "Начать новый эксперимент": ("Новый эксперимент", "Подготовить новый набор наблюдений из четырёх файлов ПАК или через ручные формы."),
+                "Начать новый эксперимент": ("Новый эксперимент", "Подготовить новый набор наблюдений: из четырёх файлов ПАК или через ручные формы."),
                 "Продолжить предыдущий": ("Продолжить работу", "Открыть сохранённый черновик или продолжить ранее начатую серию."),
-                "Просмотреть результаты": ("Посмотреть результаты", "Открыть рассчитанный опыт или серию без повторного расчёта."),
-                "Загрузить четыре файла": ("Загрузить четыре файла", "experiment.json, packets.csv, routes.csv и channels.csv."),
-                "Открыть пустые формы": ("Ввести данные вручную", "Заполнить полный паспорт, пакеты, маршруты и каналы в общем редакторе."),
+                "Просмотреть результаты": ("Посмотреть результаты", "Открыть рассчитанный опыт или серию. Повторный расчёт для просмотра не нужен."),
+                "Выбрать комплект": ("Загрузить четыре файла", "experiment.json\npackets.csv\nroutes.csv\nchannels.csv"),
+                "Открыть формы ввода": ("Ввести данные вручную", "Те же сведения и параметры.\nПолный паспорт, журнал пакетов, история маршрутов и каналов.\nНе форма из семи готовых показателей."),
             }
             grid = QGridLayout()
             grid.setSpacing(18)
             for index, (label, callback) in enumerate(main_actions):
                 card = QFrame()
                 card.setObjectName("contentCard")
+                card.setMinimumHeight(320 if title == "Эксперименты" else 310)
                 card_layout = QVBoxLayout(card)
                 card_layout.setContentsMargins(24, 24, 24, 24)
                 card_layout.setSpacing(14)
@@ -2203,9 +2238,9 @@ class MainWindow(QMainWindow):
                 grid.addWidget(card, 0, index)
             body_layout.addLayout(grid)
             note = QLabel(
-                "Новые эксперименты сохраняются отдельно. Предыдущие данные, параметры и результаты доступны в истории."
+                "Новые эксперименты добавляются отдельно. Предыдущие данные, параметры оценивания и результаты сохраняются."
                 if title == "Эксперименты" else
-                "Оба способа открывают один редактор. Число записей определяется исходным опытом."
+                "Оба способа открывают единый редактор. Количество записей определяется экспериментом, а не размером эталонного примера."
             )
             note.setObjectName("infoNote")
             note.setWordWrap(True)
@@ -2222,6 +2257,7 @@ class MainWindow(QMainWindow):
             if extra_widget is not None:
                 card_layout.addWidget(extra_widget, 1 if title == "Результаты и черновики" else 0)
             if title == "Главное меню":
+                card.setMinimumSize(700, 420)
                 card.setMaximumWidth(760)
                 card.setMaximumHeight(500)
                 menu_title = QLabel("Комплексная оценка алгоритмов")
@@ -2236,17 +2272,29 @@ class MainWindow(QMainWindow):
                 menu_actions = dict(main_actions)
                 primary = action("Эксперименты", menu_actions["Эксперименты"], primary=True)
                 primary.setMinimumWidth(450)
+                primary.setMinimumHeight(56)
                 card_layout.addWidget(primary, alignment=Qt.AlignmentFlag.AlignHCenter)
                 secondary = QHBoxLayout()
                 for label in ("Справка", "О программе"):
-                    secondary.addWidget(action(label, menu_actions[label]))
+                    secondary_button = action(label, menu_actions[label])
+                    secondary_button.setMinimumHeight(52)
+                    secondary.addWidget(secondary_button)
                 card_layout.addLayout(secondary)
-                card_layout.addWidget(action("Выход", menu_actions["Выход"]))
+                exit_button = action("Выход", menu_actions["Выход"])
+                exit_button.setMinimumHeight(52)
+                card_layout.addWidget(exit_button)
+                card_layout.addStretch()
+                menu_note = QLabel("Одна рабочая область, без постоянного бокового меню")
+                menu_note.setObjectName("cardDescription")
+                menu_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                card_layout.addWidget(menu_note)
             elif title == "Результаты и черновики":
                 result_actions = QHBoxLayout()
                 for index, (label, callback) in enumerate(main_actions):
                     result_actions.addWidget(action(label, callback, primary=index == 0))
                 card_layout.addLayout(result_actions)
+            elif title == "Состав импортированного комплекта":
+                pass  # The open action belongs in the lower transition bar.
             else:
                 for index, (label, callback) in enumerate(main_actions):
                     button = action(label, callback, primary=index == 0)
@@ -2269,6 +2317,11 @@ class MainWindow(QMainWindow):
         for label, callback in footer_actions:
             footer_layout.addWidget(action(label, callback))
         footer_layout.addStretch()
+        if title == "Состав импортированного комплекта":
+            for label, callback in main_actions:
+                open_button = action(label, callback, primary=True)
+                open_button.setMinimumWidth(220)
+                footer_layout.addWidget(open_button)
         layout.addWidget(footer)
         return page
 
@@ -2507,20 +2560,49 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Папка с четырьмя файлами")
         if not folder:
             return
+        self.pending_import = None
+        self.import_path.setText(folder)
+        self._fill_import_table(None, Path(folder))
+        self.import_open_button.setEnabled(False)
+        self.pages.setCurrentWidget(self.import_preview_page)
         try:
             experiment = read_folder(folder)
         except (DataError, OSError, ValueError) as exc:
             self._error(exc)
             return
-        self.show_import_preview(experiment)
+        self.show_import_preview(experiment, folder)
 
-    def show_import_preview(self, experiment: Experiment) -> None:
+    def show_import_page(self) -> None:
+        self.pending_import = None
+        self.import_path.clear()
+        self._fill_import_table(None)
+        self.import_open_button.setEnabled(False)
+        self.pages.setCurrentWidget(self.import_preview_page)
+
+    def _fill_import_table(self, experiment: Experiment | None, folder: Path | None = None) -> None:
+        descriptions = {
+            "experiment.json": "Паспорт, сеть, сценарий и правила наблюдения",
+            "packets.csv": "Журнал отправок и получений",
+            "routes.csv": "История установленных маршрутов",
+            "channels.csv": "Интервальные состояния и объёмы",
+        }
+        for row, (name, description) in enumerate(descriptions.items()):
+            content = experiment.original_files.get(name) if experiment else None
+            found = content is not None or (folder is not None and (folder / name).is_file())
+            count = len(experiment.tables[name]) if content is not None and name != "experiment.json" else None
+            values = (name, description, "Найден" if found else "Отсутствует" if folder else "Не выбран",
+                      str(count) if count is not None else "—")
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if content is not None:
+                    item.setToolTip(f"Размер: {len(content)} байт; SHA-256: {hashlib.sha256(content).hexdigest()}")
+                self.import_files_table.setItem(row, column, item)
+
+    def show_import_preview(self, experiment: Experiment, folder: str | Path | None = None) -> None:
         self.pending_import = experiment
-        files = experiment.original_files
-        self.import_files_table.setRowCount(len(files))
-        for row, (name, content) in enumerate(files.items()):
-            for column, value in enumerate((name, str(len(content)), hashlib.sha256(content).hexdigest())):
-                self.import_files_table.setItem(row, column, QTableWidgetItem(value))
+        self.import_path.setText(str(folder) if folder is not None else "Комплект выбран")
+        self._fill_import_table(experiment)
+        self.import_open_button.setEnabled(True)
         self.pages.setCurrentWidget(self.import_preview_page)
 
     def accept_import_preview(self) -> None:

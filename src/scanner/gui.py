@@ -454,6 +454,24 @@ class TimelineChart(QWidget):
     def _resize_to_rows(self) -> None:
         self.setMinimumHeight(max(260, 95 + 31 * len(self._rows())))
 
+    @staticmethod
+    def _unobserved_intervals(segments: list[dict[str, Any]], start: float,
+                              end: float) -> list[tuple[float, float]]:
+        """Find parts of the visible model-time window without a recorded row."""
+        gaps = []
+        cursor = start
+        for segment in sorted(segments, key=lambda row: float(row["time_start_s"])):
+            a = max(start, float(segment["time_start_s"]))
+            b = min(end, float(segment["time_end_s"]))
+            if b <= a:
+                continue
+            if a > cursor:
+                gaps.append((cursor, a))
+            cursor = max(cursor, b)
+        if cursor < end:
+            gaps.append((cursor, end))
+        return gaps
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -481,6 +499,16 @@ class TimelineChart(QWidget):
             painter.setPen(QPen(QColor("#273444"), 1))
             painter.drawText(QRectF(8, y, left - 16, lane_h - 2), Qt.AlignmentFlag.AlignVCenter,
                              f"{name} · {'маршрут' if kind == 'route' else 'канал'}")
+            for gap_start, gap_end in self._unobserved_intervals(segments, start, end):
+                gap_x = left + (gap_start - start) * scale
+                gap_width = (gap_end - gap_start) * scale
+                painter.setPen(QPen(QColor("#9A8061"), .6))
+                painter.setBrush(QBrush(QColor("#F3E9D5"), Qt.BrushStyle.BDiagPattern))
+                painter.drawRect(QRectF(gap_x, y + 5, gap_width, lane_h - 10))
+                if gap_width >= 92:
+                    painter.setPen(QPen(QColor("#57452E"), 1))
+                    painter.drawText(QRectF(gap_x, y + 5, gap_width, lane_h - 10),
+                                     Qt.AlignmentFlag.AlignCenter, "нет наблюдений")
             for segment in segments:
                 a = max(start, float(segment["time_start_s"]))
                 b = min(end, float(segment["time_end_s"]))
@@ -728,6 +756,14 @@ class AssessmentDialog(QWidget):
 
         timeline_page = QWidget()
         timeline_layout = QVBoxLayout(timeline_page)
+        timeline_legend = QLabel(
+            "Состояния маршрута: зелёный — установлен и работоспособен; красный — установлен, "
+            "но нарушен; серый — нет пути; фиолетовый — петля. Жёлтая штриховка — состояние "
+            "неизвестно; бежевая штриховка — нет наблюдений. Для канала зелёный означает доступен, "
+            "красный — недоступен. Пунктирная вертикаль — фактическое событие."
+        )
+        timeline_legend.setWordWrap(True)
+        timeline_layout.addWidget(timeline_legend)
         filters = QHBoxLayout()
         self.flow_filter = QComboBox()
         self.flow_filter.addItem("Все потоки", None)

@@ -10,7 +10,7 @@ from zipfile import ZipFile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QTableWidget, QTabWidget,
 )
@@ -20,7 +20,7 @@ from scanner.core.dispatcher import calculate_and_save
 import scanner.gui as gui_module
 from scanner.gui import (
     AssessmentDialog, AssessmentWorker, ComparisonDialog, MainWindow, NetworkMark, PassportEditor,
-    SeriesManagerDialog, TableEditor,
+    SeriesManagerDialog, TableEditor, TimelineChart,
 )
 from scanner.io.format import read_folder
 from scanner.io.profile import validate_profile
@@ -175,6 +175,26 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
         assert dialog.timeline_chart.time_window != full_interval
     dialog.close()
     dialog.deleteLater()
+    app.processEvents()
+
+
+def test_timeline_marks_unrecorded_model_time(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    chart = TimelineChart(read_folder(reference_folder))
+    assert chart._unobserved_intervals([
+        {"time_start_s": "2", "time_end_s": "4"},
+        {"time_start_s": "6", "time_end_s": "8"},
+    ], 0, 10) == [(0, 2), (4, 6), (8, 10)]
+    flow_id = next(iter(chart.context.flows))
+    chart.context.by_flow[flow_id] = []
+    chart.set_view(flow_id=flow_id, time_window=(0, 10))
+    chart.resize(1000, max(chart.minimumHeight(), 300))
+    chart.show()
+    app.processEvents()
+    pixel = chart.grab().toImage().pixelColor(600, 70)
+    assert pixel != QColor("white")
+    chart.close()
+    chart.deleteLater()
     app.processEvents()
 
 

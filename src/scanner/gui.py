@@ -33,6 +33,7 @@ from .core.comparison import comparability_reasons
 from .core.dispatcher import DispatchError, ResultPersistenceError, calculate_and_save
 from .core.runner import CalculationCancelled
 from .core.prepare import prepare
+from .core.scoring import expert_weights
 
 
 METRIC_LABELS = {
@@ -2168,6 +2169,320 @@ class PassportEditor(QWidget):
         dialog.exec()
 
 
+class ProfileEditor(QWidget):
+    """Editable scales and weights without exposing the profile as a JSON tree."""
+
+    changed = Signal()
+    UNITS = {"P_zad": "с", "P_pr": "бит/с", "P_pot": "доля", "P_bal": "1",
+             "P_ust": "доля", "P_ad": "с", "P_res": "байт"}
+
+    def __init__(self, value: dict[str, Any]):
+        super().__init__()
+        self._data: dict[str, Any] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        actions = QHBoxLayout()
+        self.load_button = QPushButton("Выбрать профиль")
+        actions.addWidget(self.load_button)
+        copy_button = QPushButton("Создать копию")
+        copy_button.clicked.connect(self.create_copy)
+        actions.addWidget(copy_button)
+        actions.addStretch()
+        self.weights_button = QPushButton("Экспертные оценки и веса")
+        self.weights_button.clicked.connect(lambda: self._show_page(1))
+        actions.addWidget(self.weights_button)
+        layout.addLayout(actions)
+        self.pages = QStackedWidget()
+        layout.addWidget(self.pages, 1)
+
+        scales_page = QWidget()
+        scales_layout = QVBoxLayout(scales_page)
+        profile_line = QHBoxLayout()
+        profile_line.addWidget(QLabel("Профиль Ω"))
+        self.profile_id = QLineEdit()
+        self.profile_id.setObjectName("profileId")
+        self.profile_id.setPlaceholderText("Идентификатор профиля")
+        self.profile_id.textChanged.connect(lambda value: self._set_field("profile_id", value))
+        profile_line.addWidget(self.profile_id, 1)
+        scales_layout.addLayout(profile_line)
+        scales_card = QFrame()
+        scales_card.setObjectName("contentCard")
+        scales_card_layout = QVBoxLayout(scales_card)
+        scales_card_layout.addWidget(QLabel("Физические опоры и нормированные значения", objectName="cardTitle"))
+        self.scales_table = QTableWidget(len(METRICS), 4)
+        self.scales_table.setObjectName("normalizationScales")
+        self.scales_table.setHorizontalHeaderLabels(
+            ["Показатель", "Единица", "Предпочтение", "Опоры: значение → оценка"])
+        self.scales_table.horizontalHeader().setStretchLastSection(True)
+        self.scales_table.setColumnWidth(0, 180)
+        self.scales_table.setColumnWidth(1, 90)
+        self.scales_table.setColumnWidth(2, 130)
+        self.scales_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.scales_table.setAlternatingRowColors(True)
+        scales_card_layout.addWidget(self.scales_table, 1)
+        edit_points = QPushButton("Изменить опоры выбранного показателя")
+        edit_points.clicked.connect(self.edit_points)
+        scales_card_layout.addWidget(edit_points)
+        note = QLabel("Опоры фиксируются до сравнения. За их пределами действует насыщение; исходные значения сохраняются.")
+        note.setObjectName("infoNote")
+        note.setWordWrap(True)
+        scales_card_layout.addWidget(note)
+        scales_layout.addWidget(scales_card, 1)
+        self.pages.addWidget(scales_page)
+
+        weights_page = QWidget()
+        weights_layout = QVBoxLayout(weights_page)
+        back = QPushButton("К шкалам нормализации")
+        back.clicked.connect(lambda: self._show_page(0))
+        weights_layout.addWidget(back, alignment=Qt.AlignmentFlag.AlignLeft)
+        weights_cards = QHBoxLayout()
+        expert_card = QFrame()
+        expert_card.setObjectName("contentCard")
+        expert_layout = QVBoxLayout(expert_card)
+        expert_layout.addWidget(QLabel("Значимость перехода от худшей опоры к лучшей", objectName="cardTitle"))
+        self.expert_table = QTableWidget(0, 8)
+        self.expert_table.setObjectName("expertScores")
+        self.expert_table.setHorizontalHeaderLabels(["Эксперт / источник", *[METRIC_LABELS[key] for key in METRICS]])
+        self.expert_table.horizontalHeader().setStretchLastSection(True)
+        self.expert_table.setColumnWidth(0, 170)
+        for column in range(1, 8):
+            self.expert_table.setColumnWidth(column, 78)
+        self.expert_table.itemChanged.connect(self._expert_changed)
+        expert_layout.addWidget(self.expert_table)
+        self.expert_empty_note = QLabel("Экспертные оценки не заданы: используются фиксированные веса профиля.")
+        self.expert_empty_note.setObjectName("cardDescription")
+        expert_layout.addWidget(self.expert_empty_note)
+        expert_actions = QHBoxLayout()
+        for title, callback in (("Добавить эксперта", self.add_expert),
+                                ("Удалить эксперта", self.remove_expert),
+                                ("Рассчитать веса", self.calculate_weights)):
+            button = QPushButton(title)
+            button.clicked.connect(callback)
+            expert_actions.addWidget(button)
+        expert_layout.addLayout(expert_actions)
+        expert_layout.addWidget(QLabel("Полученные веса wᵢ", objectName="cardTitle"))
+        self.weights_table = QTableWidget(1, len(METRICS))
+        self.weights_table.setObjectName("profileWeights")
+        self.weights_table.setHorizontalHeaderLabels([METRIC_LABELS[key] for key in METRICS])
+        self.weights_table.horizontalHeader().setStretchLastSection(True)
+        self.weights_table.setMaximumHeight(95)
+        self.weights_table.itemChanged.connect(self._weight_changed)
+        expert_layout.addWidget(self.weights_table)
+        self.weight_sum = QLabel()
+        self.weight_sum.setObjectName("infoNote")
+        expert_layout.addWidget(self.weight_sum)
+        expert_layout.addWidget(QLabel(
+            "Формула (3.36): нормировать оценки каждого эксперта, затем усреднить. "
+            "Пустые экспертные оценки не создаются автоматически."))
+        weights_cards.addWidget(expert_card, 3)
+
+        basis_card = QFrame()
+        basis_card.setObjectName("contentCard")
+        basis_layout = QVBoxLayout(basis_card)
+        basis_layout.addWidget(QLabel("Основания профиля", objectName="cardTitle"))
+        basis_layout.addWidget(QLabel("Статус"))
+        self.profile_status = QLineEdit()
+        self.profile_status.setObjectName("profileStatus")
+        self.profile_status.textChanged.connect(lambda value: self._set_field(
+            "profile_status", "demonstration_not_empirically_calibrated"
+            if value == "Демонстрационный" else value))
+        basis_layout.addWidget(self.profile_status)
+        basis_layout.addWidget(QLabel("Основание шкал и весов"))
+        self.basis = QPlainTextEdit()
+        self.basis.setObjectName("profileBasis")
+        self.basis.setFixedHeight(110)
+        self.basis.textChanged.connect(lambda: self._set_field("basis_ru", self.basis.toPlainText()))
+        basis_layout.addWidget(self.basis)
+        basis_layout.addWidget(QLabel("Примечание"))
+        self.note = QPlainTextEdit()
+        self.note.setObjectName("profileNote")
+        self.note.setFixedHeight(160)
+        self.note.textChanged.connect(lambda: self._set_field("note_ru", self.note.toPlainText()))
+        basis_layout.addWidget(self.note)
+        basis_layout.addStretch()
+        weights_cards.addWidget(basis_card, 2)
+        weights_layout.addLayout(weights_cards, 1)
+        self.pages.addWidget(weights_page)
+        self.set_value(value)
+
+    def _show_page(self, index: int) -> None:
+        self.pages.setCurrentIndex(index)
+
+    def _set_field(self, key: str, value: str) -> None:
+        if self._data.get(key) != value:
+            self._data[key] = value
+            self.changed.emit()
+
+    def set_value(self, value: dict[str, Any]) -> None:
+        if not isinstance(value, dict):
+            raise ValueError("Профиль Ω должен быть объектом")
+        self._data = deepcopy(value)
+        status = value.get("profile_status", "")
+        shown_status = "Демонстрационный" if status == "demonstration_not_empirically_calibrated" else status
+        for control, content in ((self.profile_id, value.get("profile_id", "")),
+                                 (self.profile_status, shown_status),
+                                 (self.basis, value.get("basis_ru", "")),
+                                 (self.note, value.get("note_ru", ""))):
+            control.blockSignals(True)
+            if isinstance(control, QLineEdit):
+                control.setText(str(content or ""))
+            else:
+                control.setPlainText(str(content or ""))
+            control.blockSignals(False)
+        metrics = value.get("metrics", {})
+        for row, key in enumerate(METRICS):
+            metric = metrics.get(key, {}) if isinstance(metrics, dict) else {}
+            points = metric.get("points", []) if isinstance(metric, dict) else []
+            summary = "; ".join(f"{_display_number(pair[0])} → {_display_number(pair[1])}"
+                                for pair in points if isinstance(pair, list) and len(pair) == 2)
+            cells = (METRIC_NAMES[key], self.UNITS[key],
+                     "Уменьшать" if DIRECTIONS[key] == "min" else "Увеличивать", summary or "Не заданы")
+            for column, content in enumerate(cells):
+                item = QTableWidgetItem(content)
+                item.setToolTip(content)
+                self.scales_table.setItem(row, column, item)
+        self.expert_table.blockSignals(True)
+        experts = value.get("experts", [])
+        self.expert_table.setRowCount(len(experts) if isinstance(experts, list) else 0)
+        if isinstance(experts, list):
+            for row, expert in enumerate(experts):
+                scores = expert.get("scores", {}) if isinstance(expert, dict) else {}
+                self.expert_table.setItem(row, 0, QTableWidgetItem(str(expert.get("name_ru", "") if isinstance(expert, dict) else "")))
+                for column, key in enumerate(METRICS, 1):
+                    self.expert_table.setItem(row, column, QTableWidgetItem(str(scores.get(key, ""))))
+        self.expert_table.blockSignals(False)
+        self.expert_empty_note.setVisible(self.expert_table.rowCount() == 0)
+        self.expert_table.setMaximumHeight(160 if self.expert_table.rowCount() == 0 else 280)
+        self._render_weights()
+
+    def _render_weights(self) -> None:
+        self.weights_table.blockSignals(True)
+        metrics = self._data.get("metrics", {})
+        total = Decimal(0)
+        complete = True
+        for column, key in enumerate(METRICS):
+            metric = metrics.get(key, {}) if isinstance(metrics, dict) else {}
+            value = metric.get("weight") if isinstance(metric, dict) else None
+            self.weights_table.setItem(0, column, QTableWidgetItem("" if value is None else str(value)))
+            try:
+                total += Decimal(str(value))
+            except (InvalidOperation, TypeError, ValueError):
+                complete = False
+        self.weights_table.blockSignals(False)
+        self.weight_sum.setText(f"Сумма весов: {_display_number(total)}" if complete else "Сумма весов: не задана")
+
+    def _weight_changed(self, item: QTableWidgetItem) -> None:
+        key = METRICS[item.column()]
+        metric = self._data.setdefault("metrics", {}).setdefault(key, {
+            "direction": DIRECTIONS[key], "points": []})
+        text = item.text().strip().replace(",", ".")
+        try:
+            metric["weight"] = float(text) if text else None
+        except ValueError:
+            metric["weight"] = text
+        self._render_weights()
+        self.changed.emit()
+
+    def _expert_changed(self, item: QTableWidgetItem) -> None:
+        expert = self._data["experts"][item.row()]
+        if item.column() == 0:
+            expert["name_ru"] = item.text()
+        else:
+            expert.setdefault("scores", {})[METRICS[item.column() - 1]] = item.text().replace(",", ".")
+        self.changed.emit()
+
+    def add_expert(self) -> None:
+        self._data.setdefault("experts", []).append({
+            "name_ru": "", "scores": {key: "" for key in METRICS}})
+        self.set_value(self._data)
+        self.changed.emit()
+
+    def remove_expert(self) -> None:
+        row = self.expert_table.currentRow()
+        if row < 0 or "experts" not in self._data:
+            return
+        del self._data["experts"][row]
+        if not self._data["experts"]:
+            del self._data["experts"]
+        self.set_value(self._data)
+        self.changed.emit()
+
+    def calculate_weights(self) -> None:
+        try:
+            weights = expert_weights(self._data.get("experts", []))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Экспертные оценки", str(exc))
+            return
+        for key, weight in weights.items():
+            self._data.setdefault("metrics", {}).setdefault(key, {
+                "direction": DIRECTIONS[key], "points": []})["weight"] = float(weight)
+        self._render_weights()
+        self.changed.emit()
+
+    def edit_points(self) -> None:
+        row = self.scales_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Шкалы", "Выберите показатель в таблице")
+            return
+        key = METRICS[row]
+        metric = self._data.get("metrics", {}).get(key, {})
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Опоры: {METRIC_NAMES[key]}")
+        dialog.resize(550, 430)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Физическое значение → нормированная оценка от 0 до 1"))
+        points = QTableWidget(0, 2)
+        points.setObjectName("profilePoints")
+        points.setHorizontalHeaderLabels([f"Значение, {self.UNITS[key]}", "Оценка [0; 1]"])
+        points.horizontalHeader().setStretchLastSection(True)
+        for pair in metric.get("points", []):
+            row_index = points.rowCount()
+            points.insertRow(row_index)
+            for column, value in enumerate(pair):
+                points.setItem(row_index, column, QTableWidgetItem(str(value)))
+        layout.addWidget(points)
+        actions = QHBoxLayout()
+        add = QPushButton("Добавить опору")
+        add.clicked.connect(lambda: points.insertRow(points.rowCount()))
+        remove = QPushButton("Удалить опору")
+        remove.clicked.connect(lambda: points.removeRow(points.currentRow()) if points.currentRow() >= 0 else None)
+        actions.addWidget(add)
+        actions.addWidget(remove)
+        layout.addLayout(actions)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.rejected.connect(dialog.reject)
+        def save() -> None:
+            result = []
+            try:
+                for index in range(points.rowCount()):
+                    pair = []
+                    for column in range(2):
+                        item = points.item(index, column)
+                        pair.append(float(item.text().replace(",", ".")) if item and item.text().strip() else None)
+                    result.append(pair)
+            except ValueError:
+                QMessageBox.warning(dialog, "Шкалы", "Опоры должны содержать числа")
+                return
+            target = self._data.setdefault("metrics", {}).setdefault(key, {
+                "direction": DIRECTIONS[key], "weight": None})
+            target["points"] = result
+            self.set_value(self._data)
+            self.changed.emit()
+            dialog.accept()
+        buttons.accepted.connect(save)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def create_copy(self) -> None:
+        original = self._data.get("profile_id", "")
+        self._data["profile_id"] = f"{original}_COPY" if original else "NEW_PROFILE"
+        self.set_value(self._data)
+        self.changed.emit()
+
+    def value(self) -> dict[str, Any]:
+        return deepcopy(self._data)
+
+
 class CsvModel(QAbstractTableModel):
     changed = Signal()
 
@@ -2185,12 +2500,18 @@ class CsvModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if index.isValid() and role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
-            return self.rows[index.row()][self.header[index.column()]]
+            key = self.header[index.column()]
+            value = self.rows[index.row()][key]
+            if role == Qt.ItemDataRole.DisplayRole:
+                if key in TABLE_CHOICES:
+                    return dict((raw, label) for label, raw in TABLE_CHOICES[key]).get(value, value)
+                return value if value else "—"
+            return value
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if role == Qt.ItemDataRole.DisplayRole:
-            return self.header[section] if orientation == Qt.Orientation.Horizontal else str(section + 2)
+            return TABLE_LABELS.get(self.header[section], self.header[section]) if orientation == Qt.Orientation.Horizontal else str(section + 2)
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:
@@ -2229,20 +2550,66 @@ class CsvModel(QAbstractTableModel):
         return True
 
 
+TABLE_SUMMARY = {
+    "packets.csv": ("packet_id", "flow_id", "tx_time_s", "rx_time_s", "payload_bytes"),
+    "routes.csv": ("flow_id", "route_set_id", "time_start_s", "time_end_s", "route_state"),
+    "channels.csv": ("link_id", "time_start_s", "time_end_s", "tx_data_bytes", "tx_routing_bytes", "link_up"),
+}
+TABLE_TITLES = {
+    "packets.csv": ("Журнал отправок", "Дополнительные поля записи"),
+    "routes.csv": ("Маршрутные интервалы", "Редактор выбранного пути"),
+    "channels.csv": ("Интервалы направленных соединений", "Параметры выбранного интервала"),
+}
+TABLE_LABELS = {
+    "flow_id": "Поток", "packet_id": "Пакет", "tx_time_s": "Отправка, с",
+    "rx_time_s": "Первый приём, с", "payload_bytes": "Полезных байт",
+    "rx_copy_count": "Корректных копий", "observed_until_s": "Наблюдался до, с",
+    "observation_status": "Полнота наблюдения", "drop_reason": "Причина отбрасывания",
+    "route_set_id": "Версия набора", "path_id": "Идентификатор пути",
+    "time_start_s": "Начало, с", "time_end_s": "Конец, с",
+    "path_links": "Направленные каналы по порядку", "route_state": "Состояние",
+    "selection_share": "Доля выбора", "cause_event_id": "Связанное событие",
+    "link_id": "Канал", "link_up": "Доступен", "capacity_bps": "Скорость, бит/с",
+    "propagation_delay_s": "Задержка, с", "routing_cost": "Маршрутная стоимость",
+    "tx_data_bytes": "Данные, байт", "tx_routing_bytes": "Маршрут., байт",
+    "tx_other_bytes": "Прочие байты", "queue_mean_bytes": "Средняя очередь, байт",
+    "queue_max_bytes": "Макс. очередь, байт", "drop_data_packets": "Отброшено пакетов",
+}
+TABLE_CHOICES = {
+    "link_up": (("Не задано", ""), ("Да", "1"), ("Нет", "0")),
+    "observation_status": (("Не задано", ""), ("Полное", "complete"),
+                           ("Частичное", "partial"), ("Неизвестно", "unknown")),
+    "route_state": (("Не задано", ""), ("Установлен", "installed"),
+                    ("Нет пути", "no_route"), ("Петля", "loop"), ("Неизвестно", "unknown")),
+}
+
+
 class TableEditor(QWidget):
     changed = Signal()
 
     def __init__(self, name: str):
         super().__init__()
+        self.name = name
         self.model = CsvModel(name)
         self.model.changed.connect(self.changed)
         self.view = QTableView()
         self.view.setModel(self.model)
-        self.view.setColumnHidden(0, True)  # experiment_id comes from the passport.
+        self.view.setObjectName("recordSummary")
+        self.view.setEditTriggers(QTableView.EditTrigger.DoubleClicked |
+                                  QTableView.EditTrigger.EditKeyPressed)
+        self.view.setColumnHidden(0, True)
+        for column, key in enumerate(self.model.header):
+            if key not in TABLE_SUMMARY[name]:
+                self.view.setColumnHidden(column, True)
+        for position, key in enumerate(TABLE_SUMMARY[name], 1):
+            header = self.view.horizontalHeader()
+            header.moveSection(header.visualIndex(self.model.header.index(key)), position)
         self.view.setAlternatingRowColors(True)
         self.view.horizontalHeader().setStretchLastSection(True)
+        for key in TABLE_SUMMARY[name]:
+            width = 135 if key in {"packet_id", "link_id", "rx_time_s"} else 120 if key == "tx_routing_bytes" else 105
+            self.view.setColumnWidth(self.model.header.index(key), width)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.view)
         buttons = QHBoxLayout()
         for label, callback in (("Добавить строку", self.add_row), ("Удалить строки", self.delete_rows),
                                 ("Копировать", self.copy), ("Вставить диапазон", self.paste)):
@@ -2250,6 +2617,146 @@ class TableEditor(QWidget):
             button.clicked.connect(callback)
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        cards = QHBoxLayout()
+        cards.setSpacing(14)
+        table_card = QFrame()
+        table_card.setObjectName("contentCard")
+        table_layout = QVBoxLayout(table_card)
+        table_layout.addWidget(QLabel(TABLE_TITLES[name][0], objectName="cardTitle"))
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Поиск по видимым полям")
+        self.search.textChanged.connect(self._filter_rows)
+        table_layout.addWidget(self.search)
+        table_layout.addWidget(self.view, 1)
+        self.count_label = QLabel()
+        self.count_label.setObjectName("cardDescription")
+        table_layout.addWidget(self.count_label)
+        cards.addWidget(table_card, 3)
+        detail_card = QFrame()
+        detail_card.setObjectName("contentCard")
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.addWidget(QLabel(TABLE_TITLES[name][1], objectName="cardTitle"))
+        self.detail_scroll = QScrollArea()
+        self.detail_scroll.setWidgetResizable(True)
+        self.detail_content = QWidget()
+        self.detail_form = QGridLayout(self.detail_content)
+        self.detail_form.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.detail_form.setVerticalSpacing(12)
+        self.detail_scroll.setWidget(self.detail_content)
+        detail_layout.addWidget(self.detail_scroll, 1)
+        cards.addWidget(detail_card, 2)
+        layout.addLayout(cards, 1)
+        note = {
+            "packets.csv": "Пустой приём не означает нулевую задержку. Время наблюдения не создаётся автоматически.",
+            "routes.csv": "Каналы пути задаются по порядку; программа не ищет маршрут вместо исследуемого алгоритма.",
+            "channels.csv": "Объёмы относятся к интервалу. Отсутствие измерения не заменяется нулём.",
+        }[name]
+        layout.addWidget(QLabel(note, objectName="cardDescription"))
+        self._detail_controls: dict[str, QWidget] = {}
+        self.view.selectionModel().currentRowChanged.connect(lambda *_: self._show_detail())
+        self.model.modelReset.connect(self._refresh_rows)
+        self.model.rowsInserted.connect(self._refresh_rows)
+        self.model.rowsRemoved.connect(self._refresh_rows)
+        self.model.dataChanged.connect(self._sync_detail)
+        self._refresh_rows()
+
+    def _refresh_rows(self, *_args) -> None:
+        self.count_label.setText(f"Записей: {self.model.rowCount()} · выберите строку для просмотра всех полей")
+        self._filter_rows(self.search.text())
+        if self.model.rowCount() and not self.view.currentIndex().isValid():
+            self.view.setCurrentIndex(self.model.index(0, self.model.header.index(TABLE_SUMMARY[self.name][0])))
+        self._show_detail()
+
+    def _filter_rows(self, query: str) -> None:
+        needle = query.casefold().strip()
+        visible = []
+        for row, values in enumerate(self.model.rows):
+            shown = " ".join(values.get(key, "") for key in TABLE_SUMMARY[self.name])
+            matched = needle in shown.casefold()
+            self.view.setRowHidden(row, not matched)
+            if matched:
+                visible.append(row)
+        current = self.view.currentIndex().row()
+        if visible and current not in visible:
+            self.view.setCurrentIndex(self.model.index(visible[0], self.model.header.index(TABLE_SUMMARY[self.name][0])))
+        elif not visible and current >= 0:
+            self.view.setCurrentIndex(QModelIndex())
+            self._show_detail()
+
+    def _show_detail(self) -> None:
+        while self.detail_form.count():
+            item = self.detail_form.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+        self._detail_controls.clear()
+        row = self.view.currentIndex().row()
+        if row < 0 or row >= self.model.rowCount():
+            self.detail_form.addWidget(QLabel("Выберите запись или добавьте новую."), 0, 0)
+            return
+        keys = [key for key in self.model.header if key != "experiment_id"]
+        self.detail_content.setMinimumHeight(((len(keys) + 1) // 2) * 88 +
+                                             (60 if "path_links" in keys else 0) + 12)
+        for index, key in enumerate(keys):
+            cell = QWidget()
+            cell.setMinimumHeight(132 if key == "path_links" else 76)
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            caption = QLabel(TABLE_LABELS.get(key, key))
+            caption.setObjectName("fieldLabel")
+            cell_layout.addWidget(caption)
+            raw = self.model.rows[row].get(key, "")
+            if key == "path_links":
+                control = QPlainTextEdit()
+                try:
+                    links = json.loads(raw) if raw else []
+                    control.setPlainText("\n".join(links) if isinstance(links, list) else raw)
+                except (TypeError, ValueError):
+                    control.setPlainText(raw)
+                control.setPlaceholderText("Один link_id на строку")
+                control.setFixedHeight(90)
+                control.textChanged.connect(lambda r=row, c=control, k=key: self.model.setData(
+                    self.model.index(r, self.model.header.index(k)),
+                    json.dumps([line.strip() for line in c.toPlainText().splitlines() if line.strip()],
+                               ensure_ascii=False)))
+            elif key in TABLE_CHOICES:
+                control = QComboBox()
+                for label, value in TABLE_CHOICES[key]:
+                    control.addItem(label, value)
+                selected = control.findData(raw)
+                control.setCurrentIndex(max(selected, 0))
+                control.currentIndexChanged.connect(lambda _i, r=row, c=control, k=key: self.model.setData(
+                    self.model.index(r, self.model.header.index(k)), c.currentData()))
+            else:
+                control = QLineEdit(raw)
+                control.setPlaceholderText("Не измерено / не задано")
+                control.textChanged.connect(lambda text, r=row, k=key: self.model.setData(
+                    self.model.index(r, self.model.header.index(k)), text))
+            control.setObjectName(f"record.{self.name}.{key}")
+            cell_layout.addWidget(control)
+            technical = QLabel(key)
+            technical.setObjectName("fieldKey")
+            cell_layout.addWidget(technical)
+            self._detail_controls[key] = control
+            self.detail_form.addWidget(cell, index // 2, index % 2)
+
+    def _sync_detail(self, first: QModelIndex, _last: QModelIndex, *_args) -> None:
+        if first.row() != self.view.currentIndex().row():
+            return
+        key = self.model.header[first.column()]
+        control = self._detail_controls.get(key)
+        if control is None or key == "path_links":
+            return
+        raw = self.model.rows[first.row()][key]
+        control.blockSignals(True)
+        if isinstance(control, QLineEdit) and control.text() != raw:
+            control.setText(raw)
+        elif isinstance(control, QComboBox):
+            selected = control.findData(raw)
+            control.setCurrentIndex(max(selected, 0))
+        control.blockSignals(False)
 
     def add_row(self) -> None:
         selected = self.view.currentIndex()
@@ -2558,19 +3065,19 @@ class MainWindow(QMainWindow):
             editor = TableEditor(name)
             self.tables[name] = editor
             self.tabs.addTab(editor, title)
-        self.profile = JsonTree({"profile_id": "", "metrics": {}}, "Профиль оценивания Ω")
-        load_profile = QPushButton("Загрузить Ω")
-        load_profile.clicked.connect(self.import_profile)
-        self.profile.layout().insertWidget(1, load_profile, alignment=Qt.AlignmentFlag.AlignRight)
+        self.profile = ProfileEditor({"profile_id": "", "metrics": {}})
+        self.profile.load_button.clicked.connect(self.import_profile)
         self.tabs.addTab(self.profile, "Профиль оценивания")
         self.tabs.currentChanged.connect(self._update_editor_heading)
         self.passport.tabs.currentChanged.connect(self._update_editor_heading)
+        self.profile.pages.currentChanged.connect(self._update_editor_heading)
         self._update_editor_heading()
         self.passport.changed.connect(self.mark_input_dirty)
         self.passport.changed.connect(self._update_editor_heading)
         self.profile.changed.connect(self.mark_dirty)
         for editor in self.tables.values():
             editor.changed.connect(self.mark_input_dirty)
+            editor.changed.connect(self._update_editor_heading)
         editor_actions = QHBoxLayout()
         editor_actions.setContentsMargins(30, 8, 30, 8)
         editor_actions.setSpacing(10)
@@ -2603,14 +3110,26 @@ class MainWindow(QMainWindow):
                 1: "Пакеты: отправка и получение",
                 2: "Маршруты: принятые решения",
                 3: "Каналы: состояние и ресурсы",
-                4: "Профиль оценивания: экспертные оценки и веса",
+                4: "Профиль оценивания: экспертные оценки и веса" if self.profile.pages.currentIndex() else
+                   "Профиль оценивания: шкалы нормализации",
             }.get(self.tabs.currentIndex(), "Редактор исходных данных")
-            self.editor_code.setText("П05")
+            self.editor_code.setText({1: "П05.10", 2: "П05.11", 3: "П05.12",
+                                      4: "П05.14" if self.profile.pages.currentIndex() else "П05.13"}.get(
+                                          self.tabs.currentIndex(), "П05"))
         self.editor_heading.setText(title)
         experiment_id = self.passport._data.get("experiment_id", "")
-        self.editor_subtitle.setText(
-            f"{experiment_id or 'Новый опыт'} · единая форма для импорта и ручного ввода · данные текущего опыта"
-        )
+        current = self.tabs.currentWidget()
+        if isinstance(current, TableEditor):
+            self.editor_subtitle.setText(
+                f"{current.name} · все {len(current.model.header)} полей доступны · "
+                f"{current.model.rowCount()} записей текущего опыта")
+        elif current is self.profile:
+            profile_id = self.profile.value().get("profile_id") or "Новый профиль"
+            self.editor_subtitle.setText(
+                f"{profile_id} · физические опоры, семь весов и основания выбора")
+        else:
+            self.editor_subtitle.setText(
+                f"{experiment_id or 'Новый опыт'} · единая форма для импорта и ручного ввода · данные текущего опыта")
 
     def _set_retry_available(self, available: bool) -> None:
         self.retry_button.setEnabled(available)

@@ -12,7 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QTableWidget, QTabWidget,
+    QApplication, QFileDialog, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit,
+    QTableWidget, QTableWidgetItem, QTabWidget, QComboBox, QDialogButtonBox,
 )
 
 from scanner.core import calculate
@@ -20,7 +21,7 @@ from scanner.core.dispatcher import calculate_and_save
 import scanner.gui as gui_module
 from scanner.gui import (
     AssessmentDialog, AssessmentWorker, ComparisonDialog, MainWindow, NetworkMark, PassportEditor,
-    SeriesManagerDialog, TableEditor, TimelineChart,
+    SeriesManagerDialog, TableEditor, TimelineChart, ProfileEditor,
 )
 from scanner.io.format import read_folder
 from scanner.io.profile import validate_profile
@@ -509,6 +510,89 @@ def test_table_editor_supports_add_copy_paste_and_delete() -> None:
     editor.view.selectRow(1)
     editor.delete_rows()
     assert editor.model.rowCount() == 1
+    editor.close()
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_table_forms_preserve_csv_fields_and_blank_observations(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = read_folder(reference_folder).table_strings()
+    packets = TableEditor("packets.csv")
+    packets.model.set_rows(source["packets.csv"][:2])
+    assert packets.view.isColumnHidden(packets.model.header.index("drop_reason"))
+    assert not packets.view.isColumnHidden(packets.model.header.index("packet_id"))
+    packets.view.setCurrentIndex(packets.model.index(0, 2))
+    receive = packets.findChild(QLineEdit, "record.packets.csv.rx_time_s")
+    assert receive is not None
+    receive.clear()
+    assert packets.model.rows[0]["rx_time_s"] == ""
+    status = packets.findChild(QComboBox, "record.packets.csv.observation_status")
+    assert status is not None and status.currentData() == "complete"
+    status.setCurrentIndex(status.findData("partial"))
+    assert packets.model.rows[0]["observation_status"] == "partial"
+    packets.search.setText(source["packets.csv"][1]["packet_id"])
+    assert packets.view.isRowHidden(0) and not packets.view.isRowHidden(1)
+    assert packets.view.currentIndex().row() == 1
+    packets.close()
+
+    channels = TableEditor("channels.csv")
+    channels.model.set_rows(source["channels.csv"][:1])
+    channels.view.setCurrentIndex(channels.model.index(0, 1))
+    up = channels.findChild(QComboBox, "record.channels.csv.link_up")
+    assert up is not None
+    up.setCurrentIndex(up.findData("0"))
+    assert channels.model.rows[0]["link_up"] == "0"
+    assert channels.model.rows[0]["queue_mean_bytes"] == source["channels.csv"][0]["queue_mean_bytes"]
+    channels.close()
+
+    routes = TableEditor("routes.csv")
+    routes.model.set_rows(source["routes.csv"][:1])
+    routes.view.setCurrentIndex(routes.model.index(0, 1))
+    path = routes.findChild(QPlainTextEdit, "record.routes.csv.path_links")
+    assert path is not None and "[" not in path.toPlainText()
+    original_links = json.loads(source["routes.csv"][0]["path_links"])
+    assert path.toPlainText().splitlines() == original_links
+    path.setPlainText("L_A_B\nL_B_C")
+    assert json.loads(routes.model.rows[0]["path_links"]) == ["L_A_B", "L_B_C"]
+    routes.close()
+    app.processEvents()
+
+
+def test_profile_forms_round_trip_scales_and_edit_weights(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = json.loads((ROOT / "configs/examples/profile_demo.json").read_text())
+    editor = ProfileEditor(original)
+    assert editor.value() == original
+    assert editor.scales_table.rowCount() == 7
+    assert editor.scales_table.item(0, 0).text() == "Задержка"
+    assert "→" in editor.scales_table.item(0, 3).text()
+    assert editor.expert_table.rowCount() == 0
+    assert "фиксированные веса" in editor.expert_empty_note.text()
+    editor.pages.setCurrentIndex(1)
+    editor.weights_table.item(0, 0).setText("0,18")
+    assert editor.value()["metrics"]["P_zad"]["weight"] == 0.18
+    editor.pages.setCurrentIndex(0)
+    editor.scales_table.setCurrentCell(0, 0)
+
+    def edit_first_point(dialog: gui_module.QDialog) -> int:
+        points = dialog.findChild(QTableWidget, "profilePoints")
+        assert points is not None
+        points.item(0, 0).setText("0,03")
+        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()
+        return 0
+
+    monkeypatch.setattr(gui_module.QDialog, "exec", edit_first_point)
+    editor.edit_points()
+    assert editor.value()["metrics"]["P_zad"]["points"][0][0] == 0.03
+    editor.add_expert()
+    editor.expert_table.item(0, 0).setText("Источник испытания")
+    for column in range(1, 8):
+        editor.expert_table.item(0, column).setText("1")
+    editor.calculate_weights()
+    assert editor.value()["experts"][0]["name_ru"] == "Источник испытания"
+    assert abs(sum(editor.value()["metrics"][key]["weight"] for key in gui_module.METRICS) - 1) < 1e-9
+    assert validate_profile(editor.value()) == []
     editor.close()
     editor.deleteLater()
     app.processEvents()

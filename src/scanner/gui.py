@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QScrollArea, QSizePolicy,
@@ -38,6 +38,11 @@ from .core.prepare import prepare
 METRIC_LABELS = {
     "P_zad": "Pзад", "P_pr": "Pпр", "P_pot": "Pпот", "P_bal": "Pбал",
     "P_ust": "Pуст", "P_ad": "Pад", "P_res": "Pрес",
+}
+METRIC_NAMES = {
+    "P_zad": "Задержка", "P_pr": "Полезная скорость", "P_pot": "Потери",
+    "P_bal": "Балансировка", "P_ust": "Устойчивость", "P_ad": "Адаптивность",
+    "P_res": "Служебный обмен",
 }
 CHART_COLORS = [QColor("#2374AB"), QColor("#F18F01"), QColor("#C73E1D"),
                 QColor("#3B8C6E"), QColor("#8055A2"), QColor("#D65DB1"), QColor("#65737E")]
@@ -582,6 +587,7 @@ class AssessmentDialog(QWidget):
         self.setWindowTitle("Результат оценки")
         self.resize(1350, 820)
         self.setObjectName("workspacePage")
+        self.setFont(QFont("Arial", 11))
         self.setStyleSheet(UI_STYLESHEET)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -595,7 +601,7 @@ class AssessmentDialog(QWidget):
         brand.setObjectName("brand")
         masthead_layout.addWidget(brand)
         masthead_layout.addStretch()
-        code = QLabel("П06")
+        code = QLabel("П06.1")
         code.setObjectName("pageCode")
         masthead_layout.addWidget(code)
         layout.addWidget(masthead)
@@ -603,6 +609,11 @@ class AssessmentDialog(QWidget):
         heading.setObjectName("pageTitle")
         heading.setContentsMargins(28, 9, 28, 0)
         layout.addWidget(heading)
+        subtitle = QLabel()
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setContentsMargins(28, 0, 28, 0)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
         integral = payload.get("integral", {})
         total = integral.get("value")
         state = "сохранён" if saved else "рассчитан, но не сохранён"
@@ -627,6 +638,7 @@ class AssessmentDialog(QWidget):
         )
         context_label = QLabel("\n".join(context_lines))
         context_label.setWordWrap(True)
+        context_label.setObjectName("cardDescription")
         if total is not None:
             context_label.setToolTip(f"Полная десятичная точность I(A): {total}")
         summary_strip = QHBoxLayout()
@@ -637,7 +649,13 @@ class AssessmentDialog(QWidget):
         score_caption = QLabel("Интегральная оценка I(A)")
         score_caption.setObjectName("cardDescription")
         score_layout.addWidget(score_caption)
-        score_value = QLabel(_display_result(integral))
+        score_text = _display_result(integral)
+        if total is not None:
+            try:
+                score_text = f"{Decimal(str(total)):.4f}".replace(".", ",")
+            except (InvalidOperation, ValueError):
+                pass
+        score_value = QLabel(score_text)
         score_value.setObjectName("scoreValue")
         score_layout.addWidget(score_value)
         score_layout.addWidget(QLabel("из 100 баллов" if total is not None else
@@ -648,9 +666,24 @@ class AssessmentDialog(QWidget):
         context_card.setObjectName("contentCard")
         context_card_layout = QVBoxLayout(context_card)
         context_card_layout.setContentsMargins(22, 14, 22, 14)
+        result_state = QLabel(
+            "Результат определён" if integral.get("status") == "exact" else
+            "Интервальная оценка" if integral.get("status") == "interval" else
+            "Полная оценка не определяется" if integral.get("status") == "not_applicable" else
+            "Оценка не определена"
+        )
+        result_state.setObjectName("cardTitle")
+        context_card_layout.addWidget(result_state)
+        if experiment is not None:
+            algorithm_title = QLabel(
+                (experiment.passport.get("algorithm", {}).get("name_ru") or
+                 experiment.passport.get("algorithm", {}).get("algorithm_id") or "Алгоритм не указан")
+                + f" · повтор {experiment.passport.get('repeat_id') or '—'}"
+            )
+            algorithm_title.setWordWrap(True)
+            context_card_layout.addWidget(algorithm_title)
         context_card_layout.addWidget(context_label)
         summary_strip.addWidget(context_card, 3)
-        layout.addLayout(summary_strip)
         tabs = FullWidthTabs()
         tabs.tabBar().setExpanding(True)
         tabs_container = QWidget()
@@ -661,21 +694,44 @@ class AssessmentDialog(QWidget):
         summary = QWidget()
         summary_layout = QVBoxLayout(summary)
         summary_layout.setContentsMargins(0, 8, 0, 8)
+        summary_layout.addLayout(summary_strip)
+        if integral.get("status") in ("interval", "unknown", "not_applicable"):
+            causes = [
+                str(item.get("raw", {}).get("reason"))
+                for item in payload.get("metrics", {}).values()
+                if item.get("raw", {}).get("reason")
+            ]
+            if integral.get("status") == "not_applicable":
+                message = "Полный балл не определяется; доступные частные показатели сохранены. "
+                message += "Неприменимый показатель не исключается с автоматическим перераспределением веса."
+            else:
+                message = "Диапазон или неопределённость отражают ограничения данных или правил их обработки; это не доверительный интервал. "
+                message += "Неизвестные значения не заменяются нулём."
+            if causes:
+                message += " Причина: " + "; ".join(dict.fromkeys(causes))
+            state_note = QLabel(message)
+            state_note.setObjectName("infoNote")
+            state_note.setWordWrap(True)
+            summary_layout.addWidget(state_note)
         overview = QHBoxLayout()
         overview.setSpacing(14)
         table_panel = QFrame()
         table_panel.setObjectName("contentCard")
         table_layout = QVBoxLayout(table_panel)
         table_layout.setContentsMargins(14, 14, 14, 14)
-        table_heading = QLabel("Семь показателей и их баллы")
+        table_heading = QLabel("Показатели и взвешенные вклады")
         table_heading.setObjectName("cardTitle")
         table_layout.addWidget(table_heading)
         table = QTableWidget(0, 10)
+        table.setObjectName("resultTable")
         table.setHorizontalHeaderLabels(["Показатель", "Исходное значение", "Единица", "Направление",
                                          "Статус", "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение"])
         table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((155, 145, 65, 85, 90, 120, 120, 65, 120, 200)):
+        for column, width in enumerate((190, 145, 70, 85, 90, 120, 100, 65, 100, 200)):
             table.setColumnWidth(column, width)
+        table.verticalHeader().hide()
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         metrics = payload.get("metrics", {})
         metric_order = [key for key in METRIC_LABELS if key in metrics]
         metric_order.extend(key for key in metrics if key not in METRIC_LABELS)
@@ -687,7 +743,7 @@ class AssessmentDialog(QWidget):
             normalized = metric.get("normalized", {})
             raw_value = _display_result(raw)
             values = (
-                f"{metric.get('symbol', key)} ({key})",
+                f"{METRIC_NAMES.get(key, key)} · {metric.get('symbol', key)}",
                 raw_value,
                 raw.get("unit", ""),
                 {"min": "меньше", "max": "больше"}.get(metric.get("direction"), metric.get("direction", "")),
@@ -703,7 +759,19 @@ class AssessmentDialog(QWidget):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(detail)
                 table.setItem(row, column, item)
+        detail_columns = (3, 4, 5, 9)
+        for column in detail_columns:
+            table.setColumnHidden(column, True)
+        show_details = QPushButton("Показать статус, нормализацию и пояснение")
+        def toggle_details() -> None:
+            expanded = table.isColumnHidden(detail_columns[0])
+            for column in detail_columns:
+                table.setColumnHidden(column, not expanded)
+            show_details.setText("Скрыть дополнительные поля" if expanded else
+                                 "Показать статус, нормализацию и пояснение")
+        show_details.clicked.connect(toggle_details)
         table_layout.addWidget(table, 1)
+        table_layout.addWidget(show_details)
         table_layout.addWidget(QLabel(
             "Полные десятичные значения доступны в подсказках строк и при экспорте JSON/CSV."
         ))
@@ -724,8 +792,10 @@ class AssessmentDialog(QWidget):
         summary_layout.addLayout(overview, 1)
         self.contribution_chart = ContributionChart(payload)
         groups = payload.get("groups", {})
+        group_names = {"I_1": "качество", "I_2": "ресурсы",
+                       "I_3": "устойчивость/адаптивность", "I_4": "служебный обмен"}
         group_line = "Группы: " + "; ".join(
-            f"{key} = {_display_result(value)}"
+            f"{group_names.get(key, key)} {_display_result(value)}"
             for key, value in groups.items()
         )
         summary_layout.addWidget(QLabel(group_line))
@@ -736,18 +806,43 @@ class AssessmentDialog(QWidget):
 
         compare_page = QWidget()
         compare_layout = QVBoxLayout(compare_page)
-        compare_layout.addWidget(QLabel(
-            "Выберите серию и две сохранённые оценки. Перед сравнением программа проверит сеть, заданный трафик, "
-            "внешние события, окно наблюдений, проверки, шкалы и веса. Фактические маршруты и потери "
-            "сами по себе сравнение не запрещают."
+        compare_layout.setContentsMargins(0, 8, 0, 8)
+        compare_card = QFrame()
+        compare_card.setObjectName("contentCard")
+        compare_card_layout = QVBoxLayout(compare_card)
+        compare_card_layout.addWidget(QLabel("Сводные результаты", objectName="cardTitle"))
+        compare_table = QTableWidget(1, 5)
+        compare_table.setObjectName("comparisonSummary")
+        compare_table.setHorizontalHeaderLabels(["Опыт", "Алгоритм", "Профиль", "Повтор", "I(A), баллы"])
+        compare_table.horizontalHeader().setStretchLastSection(True)
+        for column, width in enumerate((190, 285, 220, 105)):
+            compare_table.setColumnWidth(column, width)
+        compare_table.verticalHeader().hide()
+        compare_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        algorithm_name = (experiment.passport.get("algorithm", {}).get("name_ru") if experiment else None) or "—"
+        repeat_id = (experiment.passport.get("repeat_id") if experiment else None) or "—"
+        for column, value in enumerate((payload.get("experiment_id", "—"), algorithm_name,
+                                        payload.get("profile_id", "—"), repeat_id, _display_result(integral))):
+            compare_table.setItem(0, column, QTableWidgetItem(str(value)))
+        compare_table.setMaximumHeight(105)
+        compare_card_layout.addWidget(compare_table)
+        compare_card_layout.addWidget(QLabel(
+            "Показан текущий сохранённый опыт. Для двух опытов выберите серию; прямое сравнение "
+            "разрешается только после проверки условий."
         ))
+        compare_layout.addWidget(compare_card)
         compare_button = QPushButton("Выбрать серию для сравнения")
         compare_callback = getattr(parent, "manage_series", None)
         compare_button.setEnabled(callable(compare_callback))
         if callable(compare_callback):
             compare_button.clicked.connect(compare_callback)
-        compare_layout.addWidget(compare_button)
-        compare_layout.addWidget(self.contribution_chart, 1)
+        compare_card_layout.addWidget(compare_button)
+        chart_card = QFrame()
+        chart_card.setObjectName("contentCard")
+        chart_card_layout = QVBoxLayout(chart_card)
+        chart_card_layout.addWidget(QLabel("Горизонтальные полосы взвешенных вкладов", objectName="cardTitle"))
+        chart_card_layout.addWidget(self.contribution_chart, 1)
+        compare_layout.addWidget(chart_card, 1)
         contributions_export = QPushButton("Сохранить вклады PNG")
         contributions_export.clicked.connect(lambda: self.export_png(
             self.contribution_chart, "Сохранить вклады", "contributions.png"))
@@ -763,7 +858,6 @@ class AssessmentDialog(QWidget):
             "красный — недоступен. Пунктирная вертикаль — фактическое событие."
         )
         timeline_legend.setWordWrap(True)
-        timeline_layout.addWidget(timeline_legend)
         filters = QHBoxLayout()
         self.flow_filter = QComboBox()
         self.flow_filter.addItem("Все потоки", None)
@@ -799,8 +893,88 @@ class AssessmentDialog(QWidget):
             timeline_layout.addWidget(timeline_export)
         else:
             timeline_layout.addWidget(QLabel("Исходные наблюдения недоступны."))
+        timeline_layout.addWidget(timeline_legend)
         tabs.addTab(timeline_page, "Диаграмма Ганта")
 
+        explanation_page = QWidget()
+        explanation_layout = QVBoxLayout(explanation_page)
+        explanation_layout.setContentsMargins(0, 8, 0, 8)
+        explanation_cards = QHBoxLayout()
+        selected_card = QFrame()
+        selected_card.setObjectName("contentCard")
+        selected_layout = QVBoxLayout(selected_card)
+        selected_layout.setContentsMargins(22, 18, 22, 18)
+        selected_heading = QLabel("Выбранный показатель")
+        selected_heading.setObjectName("cardTitle")
+        selected_layout.addWidget(selected_heading)
+        metric_picker = QComboBox()
+        for key in metric_order:
+            metric_picker.addItem(f"{METRIC_NAMES.get(key, key)} · {metrics[key].get('symbol', key)}", key)
+        selected_layout.addWidget(metric_picker)
+        metric_explanation = QLabel()
+        metric_explanation.setWordWrap(True)
+        metric_explanation.setAlignment(Qt.AlignmentFlag.AlignTop)
+        selected_layout.addWidget(metric_explanation, 1)
+        explanation_cards.addWidget(selected_card, 1)
+        context_card = QFrame()
+        context_card.setObjectName("contentCard")
+        context_layout = QVBoxLayout(context_card)
+        context_layout.setContentsMargins(22, 18, 22, 18)
+        context_heading = QLabel("Контекст и ограничения")
+        context_heading.setObjectName("cardTitle")
+        context_layout.addWidget(context_heading)
+        context_detail = QLabel(
+            f"Источник: {(experiment.passport.get('data_origin') if experiment else payload.get('data_origin')) or '—'}\n"
+            f"Профиль Ω: {payload.get('profile_id', '—')}\n"
+            f"Вход v{payload.get('input_revision', '—')} · модель {payload.get('model_version', '—')}\n\n"
+            "Оценка относится к указанному варианту и условиям опыта. Балл не является вероятностью "
+            "успеха и не подтверждает выполнение всех технических требований.\n\n"
+            + ("Предупреждения:\n• " + "\n• ".join(warnings) if warnings else "Предупреждений нет.")
+        )
+        context_detail.setWordWrap(True)
+        context_detail.setAlignment(Qt.AlignmentFlag.AlignTop)
+        context_layout.addWidget(context_detail, 1)
+        explanation_cards.addWidget(context_card, 1)
+        explanation_layout.addLayout(explanation_cards, 1)
+        def show_metric_explanation() -> None:
+            key = metric_picker.currentData()
+            if key is None:
+                metric_explanation.setText("Показатель не выбран.")
+                return
+            item = metrics[key]
+            raw = item.get("raw", {})
+            trace = item.get("trace") or {}
+            lines = [
+                f"Исходное значение: {_display_result(raw)} {raw.get('unit', '')}",
+                f"Статус: {RESULT_STATUS_LABELS.get(raw.get('status'), raw.get('status', '—'))}",
+                f"Частный балл Bᵢ(A): {_display_result(item.get('partial_score', {}))}",
+                f"Вес wᵢ: {_display_number(item.get('weight'))}",
+                f"Вклад Kᵢ(A): {_display_result(item.get('contribution', {}))}",
+            ]
+            if raw.get("reason"):
+                lines.append(f"Причина: {raw['reason']}")
+            if key == "P_ad" and trace.get("checks"):
+                lines.append("Проверки перестроения:")
+                for check in trace["checks"]:
+                    lines.append(
+                        f"• {check.get('check_id', '—')}: перестроение {_display_number(check.get('time_s'))} с; "
+                        f"подтверждение {_display_number(check.get('confirmation_window_s'))} с отдельно"
+                    )
+                lines.append("Формулы (3.27)–(3.30). Подтверждение не прибавляется к перестроению.")
+            else:
+                formula = {"P_zad": "(3.14)–(3.15)", "P_pr": "(3.16)",
+                           "P_pot": "(3.17)–(3.18)", "P_bal": "(3.19)–(3.23)",
+                           "P_ust": "(3.24)–(3.26)", "P_res": "(3.31)"}.get(key)
+                if formula:
+                    lines.append(f"Формула: {formula}")
+                lines.append("Исходные выборки и счётчики доступны в технической трассе.")
+            metric_explanation.setText("\n\n".join(lines))
+        metric_picker.currentIndexChanged.connect(show_metric_explanation)
+        if metric_picker.findData("P_ad") >= 0:
+            metric_picker.setCurrentIndex(metric_picker.findData("P_ad"))
+        show_metric_explanation()
+        trace_toggle = QPushButton("Показать техническую трассу")
+        explanation_layout.addWidget(trace_toggle)
         explanation = QPlainTextEdit()
         explanation.setReadOnly(True)
         explanation.setPlainText(json.dumps({
@@ -814,26 +988,77 @@ class AssessmentDialog(QWidget):
                         for key, value in payload.get("metrics", {}).items()},
             "warnings": warnings,
         }, ensure_ascii=False, indent=2))
-        tabs.addTab(explanation, "Пояснения")
+        explanation.setVisible(False)
+        def toggle_trace() -> None:
+            visible = not explanation.isVisible()
+            explanation.setVisible(visible)
+            trace_toggle.setText("Скрыть техническую трассу" if visible else "Показать техническую трассу")
+        trace_toggle.clicked.connect(toggle_trace)
+        explanation_layout.addWidget(explanation)
+        tabs.addTab(explanation_page, "Пояснения")
+        context_short = f"{payload.get('experiment_id', '—')} · Ω {payload.get('profile_id', '—')}"
+        if experiment is not None:
+            context_short += (f" · сеть {experiment.passport.get('network', {}).get('network_id', '—')}"
+                              f" · сценарий {experiment.passport.get('scenario_id', '—')}")
+        def update_result_heading(index: int) -> None:
+            reasons = " ".join(str(item.get("raw", {}).get("reason") or "").lower()
+                               for item in payload.get("metrics", {}).values())
+            missing_observations = any(term in reasons for term in
+                                       ("непол", "не зарегистр", "нет измерения", "пробел", "журнал"))
+            titles = (
+                "Полная оценка не определяется" if integral.get("status") == "not_applicable" else
+                ("Результат при неполноте наблюдений" if missing_observations else
+                 "Результат с неопределённостью") if integral.get("status") in ("interval", "unknown") else
+                "Результаты текущего эксперимента",
+                "Сравнение экспериментов серии",
+                "Диаграмма Ганта: маршруты и каналы во времени",
+                "Пояснения к результату",
+            )
+            descriptions = (
+                context_short,
+                "Сопоставимость зависит от сети, нагрузки, событий, окна наблюдения и профиля Ω.",
+                f"{payload.get('experiment_id', '—')} · фактически наблюдавшиеся состояния · модельное время опыта",
+                "Исходные наблюдения → показатели → частные баллы → интегральная оценка",
+            )
+            heading.setText(titles[index])
+            subtitle.setText(descriptions[index])
+            page_code = ("П06.6" if integral.get("status") == "not_applicable" else
+                         "П06.5" if integral.get("status") in ("interval", "unknown") else
+                         "П06.1") if index == 0 else f"П06.{index + 1}"
+            code.setText(page_code)
+        tabs.currentChanged.connect(update_result_heading)
+        update_result_heading(0)
         footer = QFrame()
         footer.setObjectName("footerBar")
         exports = QHBoxLayout(footer)
         exports.setContentsMargins(28, 8, 28, 8)
-        close = QPushButton("Закрыть")
+        close = QPushButton("Назад")
         close_callback = getattr(parent, "close_assessment", None)
         close.clicked.connect(close_callback if callable(close_callback) else self.close)
         exports.addWidget(close)
+        export_menu = QMenu(self)
+        export_menu.addAction("Результат JSON", self.export_json)
+        export_menu.addAction("Показатели CSV", self.export_csv)
+        export_button = QPushButton("Экспорт результата")
+        export_button.setMenu(export_menu)
+        exports.addWidget(export_button)
         exports.addStretch()
         if saved and callable(getattr(parent, "assign_assessment_to_series", None)):
             series_button = QPushButton("Добавить в серию")
             series_button.clicked.connect(lambda: parent.assign_assessment_to_series(
                 self.payload.get("assessment_id")))
             exports.addWidget(series_button)
-        for label, callback in (("Сохранить JSON", self.export_json),
-                                ("Сохранить CSV", self.export_csv)):
-            button = QPushButton(label)
-            button.clicked.connect(callback)
-            exports.addWidget(button)
+        if callable(getattr(parent, "next_experiment", None)):
+            next_button = QPushButton("Добавить следующий эксперимент")
+            next_button.setProperty("variant", "primary")
+            next_button.setEnabled(saved and getattr(parent, "active_series_id", None) is not None)
+            next_button.clicked.connect(parent.next_experiment)
+            exports.addWidget(next_button)
+        if callable(getattr(parent, "manage_series", None)):
+            series_management = QPushButton("Завершить серию…")
+            series_management.setEnabled(saved and getattr(parent, "active_series_id", None) is not None)
+            series_management.clicked.connect(parent.manage_series)
+            exports.addWidget(series_management)
         layout.addWidget(footer)
 
     def update_timeline(self) -> None:

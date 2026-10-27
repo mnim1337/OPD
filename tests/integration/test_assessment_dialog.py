@@ -66,7 +66,11 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
         },
     }
     dialog = AssessmentDialog(payload, True)
-    table = dialog.findChild(QTableWidget)
+    assert dialog.findChild(QLabel, "pageTitle").text() == "Результат при неполноте наблюдений"
+    assert dialog.findChild(QLabel, "pageCode").text() == "П06.5"
+    assert any("Неизвестные значения не заменяются нулём" in label.text()
+               for label in dialog.findChildren(QLabel))
+    table = dialog.findChild(QTableWidget, "resultTable")
     assert table is not None
     assert table.rowCount() == 3
     assert table.item(0, 1).text() == "не определено"
@@ -76,6 +80,14 @@ def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     assert any(label.text() == "не определено" for label in dialog.findChildren(QLabel))
     dialog.close()
     dialog.deleteLater()
+    payload["integral"] = {"status": "not_applicable", "value": None}
+    not_applicable = AssessmentDialog(payload, True)
+    assert not_applicable.findChild(QLabel, "pageTitle").text() == "Полная оценка не определяется"
+    assert not_applicable.findChild(QLabel, "pageCode").text() == "П06.6"
+    assert any("не исключается с автоматическим перераспределением веса" in label.text()
+               for label in not_applicable.findChildren(QLabel))
+    not_applicable.close()
+    not_applicable.deleteLater()
     app.processEvents()
 
 
@@ -139,14 +151,20 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     ]
     assert dialog.timeline_chart is not None
     assert dialog.radar_chart.grab().width() > 100
-    table = dialog.findChild(QTableWidget)
+    table = dialog.findChild(QTableWidget, "resultTable")
     assert table is not None and table.rowCount() == 7
+    assert all(table.isColumnHidden(column) for column in (3, 4, 5, 9))
+    detail_toggle = next(button for button in dialog.findChildren(QPushButton)
+                         if button.text() == "Показать статус, нормализацию и пояснение")
+    detail_toggle.click()
+    assert all(not table.isColumnHidden(column) for column in (3, 4, 5, 9))
     assert [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())] == [
         "Показатель", "Исходное значение", "Единица", "Направление", "Статус",
         "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение",
     ]
     assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
-        f"{payload['metrics'][key].get('symbol', key)} ({key})" for key in metric_order
+        f"{gui_module.METRIC_NAMES[key]} · {payload['metrics'][key].get('symbol', key)}"
+        for key in metric_order
     ]
     labels = [label.text() for label in dialog.findChildren(QLabel)]
     context = next(label for label in labels if label.startswith("Опыт:"))
@@ -158,6 +176,8 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     assert len(payload["groups"]) == 4 and group_summary.count(";") == 3
     tabs.setCurrentIndex(2)
     app.processEvents()
+    assert dialog.findChild(QLabel, "pageTitle").text() == "Диаграмма Ганта: маршруты и каналы во времени"
+    assert dialog.findChild(QLabel, "pageCode").text() == "П06.3"
     assert dialog.timeline_chart.grab().width() > 100
     if dialog.flow_filter.count() > 1:
         flow_id = dialog.flow_filter.itemData(1)
@@ -173,6 +193,9 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
         full_interval = dialog.timeline_chart.time_window
         dialog.event_zoom.setCurrentIndex(1)
         assert dialog.timeline_chart.time_window != full_interval
+    tabs.setCurrentIndex(3)
+    assert dialog.findChild(QLabel, "pageTitle").text() == "Пояснения к результату"
+    assert any("подтверждение" in label.text() for label in dialog.findChildren(QLabel))
     dialog.close()
     dialog.deleteLater()
     app.processEvents()

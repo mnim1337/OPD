@@ -6,6 +6,7 @@
 - [План работ по главам ТЗ](requirements/tasks.md) — задачи, зависимости и критерии готовности.
 - [План разработки](docs/development/development-plan.md) — последовательность поставок, контрольные точки и открытые решения.
 - [Матрица требований](requirements/traceability.md) и [сценарии приёмки](docs/development/acceptance-scenarios.md) — состав проверок по ТЗ.
+- [Визуальная приёмка на Windows](docs/development/windows-visual-acceptance.md) — маршрут и протокол сверки экранов этапа 4 с приложением В.
 - [Открытые решения](requirements/open-questions.md) и [рабочие численные допуски](docs/development/numerical-test-plan.md) — вопросы до приёмки.
 - [Исходные контрольные материалы](requirements/source-materials.md) — состав и назначение архивов.
 - [Понимание предметной области](understanding.md) — подтверждённые сведения и открытые вопросы.

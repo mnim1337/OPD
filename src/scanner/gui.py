@@ -1695,7 +1695,7 @@ class PassportEditor(QWidget):
 
     def _card(self, parent: QVBoxLayout, title: str, node: dict[str, Any] | None,
               path: tuple[str | int, ...], keys: tuple[str, ...] | None = None,
-              wide_keys: frozenset[str] = frozenset()) -> None:
+              wide_keys: frozenset[str] = frozenset()) -> QFrame:
         card = QFrame()
         card.setObjectName("contentCard")
         content = QVBoxLayout(card)
@@ -1709,6 +1709,24 @@ class PassportEditor(QWidget):
             content.addWidget(QLabel("Поля пока не заданы. Их можно добавить в расширенном вводе."))
         content.addStretch()
         parent.addWidget(card)
+        return card
+
+    def _open_algorithm_settings(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Настройки алгоритма и контрольная сумма")
+        dialog.resize(680, 520)
+        layout = QVBoxLayout(dialog)
+        algorithm = self._get(("algorithm",))
+        if isinstance(algorithm, dict):
+            keys = tuple(key for key in algorithm if key not in {
+                "algorithm_id", "name_ru", "implementation_version", "routing_mode"
+            })
+            self._card(layout, "Дополнительные сведения об алгоритме", algorithm,
+                       ("algorithm",), keys)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
 
     def _array_card(self, parent: QVBoxLayout, title: str, path: tuple[str, ...]) -> None:
         array = self._get(path)
@@ -1819,8 +1837,16 @@ class PassportEditor(QWidget):
             self._card(cards, "Описание эксперимента", self._data, (),
                        ("experiment_id", "repeat_id", "scenario_id", "description_ru", "data_origin"),
                        frozenset({"scenario_id", "description_ru", "data_origin"}))
-            self._card(cards, "Исследуемая реализация", self._get(("algorithm",)), ("algorithm",),
-                       wide_keys=frozenset({"algorithm_id", "name_ru", "note_ru"}))
+            algorithm_card = self._card(
+                cards, "Исследуемая реализация", self._get(("algorithm",)), ("algorithm",),
+                ("algorithm_id", "name_ru", "implementation_version", "routing_mode"),
+                frozenset({"algorithm_id", "name_ru"}),
+            )
+            algorithm_layout = algorithm_card.layout()
+            settings = QPushButton("Настройки алгоритма и контрольная сумма")
+            settings.setObjectName("algorithmSettingsButton")
+            settings.clicked.connect(self._open_algorithm_settings)
+            algorithm_layout.insertWidget(algorithm_layout.count() - 1, settings)
             layout.addLayout(cards)
         elif index == 1:
             self._card(layout, "Среда выполнения и источник", self._get(("environment",)), ("environment",))

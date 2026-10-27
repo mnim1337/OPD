@@ -429,6 +429,28 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     app.processEvents()
 
 
+def test_algorithm_settings_are_editable_from_passport_dialog(reference_folder: Path,
+                                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    editor = PassportEditor(read_folder(reference_folder).passport)
+    first_page = editor.tabs.widget(0)
+    assert first_page.findChild(QLineEdit, "passport.algorithm.implementation_sha256") is None
+    button = first_page.findChild(QPushButton, "algorithmSettingsButton")
+    assert button is not None
+
+    def edit_dialog(dialog: gui_module.QDialog) -> int:
+        checksum = dialog.findChild(QLineEdit, "passport.algorithm.implementation_sha256")
+        assert checksum is not None
+        checksum.setText("abc123")
+        return 0
+
+    monkeypatch.setattr(gui_module.QDialog, "exec", edit_dialog)
+    button.click()
+    assert editor.value()["algorithm"]["implementation_sha256"] == "abc123"
+    editor.deleteLater()
+    app.processEvents()
+
+
 def test_missing_profile_is_reported_before_calculation(
     reference_folder: Path, tmp_path: Path, monkeypatch,
 ) -> None:

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from .core import calculate
 from .core.runner import CalculationError
+from .core.sensitivity import analyze_sensitivity
+from .core.repeats import analyze_repeats
 from .io.format import DataError, export_four, read_folder
 from .io.storage import DraftStore
 from .io.validation import validate_experiment
@@ -31,6 +33,17 @@ def main() -> int:
     evaluation.add_argument("folder", type=Path)
     evaluation.add_argument("--profile", type=Path, required=True)
     evaluation.add_argument("--output", type=Path)
+    sensitivity = sub.add_parser("sensitivity", help="К3: границы чувствительности двух сопоставимых опытов")
+    sensitivity.add_argument("first_folder", type=Path)
+    sensitivity.add_argument("second_folder", type=Path)
+    sensitivity.add_argument("--profile", type=Path, required=True)
+    sensitivity.add_argument("--epsilon-weight", default="0", help="радиус L1 изменения весов, от 0 до 2")
+    sensitivity.add_argument("--output", type=Path)
+    repeats = sub.add_parser("repeats", help="К3: описательная статистика повторов одного сценария")
+    repeats.add_argument("folders", nargs="+", type=Path)
+    repeats.add_argument("--profile", type=Path, required=True)
+    repeats.add_argument("--independence-basis", help="документированное основание считать запуски независимыми")
+    repeats.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "check":
@@ -47,16 +60,28 @@ def main() -> int:
             experiment, _, revision = DraftStore(args.store).load(args.id, args.revision)
             export_four(experiment, args.folder)
             print(f"{args.id}: версия {revision} экспортирована в {args.folder}")
-        else:
-            experiment = read_folder(args.folder)
+        elif args.command in {"calculate", "sensitivity", "repeats"}:
             with args.profile.open(encoding="utf-8") as stream:
                 profile = json.load(stream)
-            report = calculate(experiment, profile)
-            payload = json.dumps(report.as_dict(), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+            if args.command == "calculate":
+                experiment = read_folder(args.folder)
+                report = calculate(experiment, profile)
+                result = report.as_dict()
+                message = f"Расчёт {experiment.experiment_id}"
+            elif args.command == "sensitivity":
+                first = read_folder(args.first_folder)
+                second = read_folder(args.second_folder)
+                result = analyze_sensitivity(first, second, profile, args.epsilon_weight)
+                message = f"Анализ чувствительности {first.experiment_id} / {second.experiment_id}"
+            else:
+                experiments = [read_folder(folder) for folder in args.folders]
+                result = analyze_repeats(experiments, profile, independence_basis=args.independence_basis)
+                message = f"Статистика {len(experiments)} повторов"
+            payload = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
             if args.output:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(payload, encoding="utf-8")
-                print(f"Расчёт {experiment.experiment_id} записан в {args.output}")
+                print(f"{message} записан в {args.output}")
             else:
                 print(payload, end="")
     except (DataError, CalculationError, KeyError, OSError, ValueError) as exc:

@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot ".."))
-$cli = Join-Path $root "$Dist\opd\opd.exe"
+$cli = Join-Path $root "$Dist\opd.exe"
 if (-not (Test-Path $cli)) {
     throw "Не найден CLI-пакет: $cli"
 }

@@ -10,7 +10,7 @@ ROOT = Path(SPECPATH).resolve().parents[1]
 hiddenimports = collect_submodules("scanner")
 
 a = Analysis(
-    [str(ROOT / "src/scanner/gui.py")],
+    [str(ROOT / "deploy/windows/gui_entry.py")],
     pathex=[str(ROOT / "src")],
     binaries=[],
     datas=[(str(ROOT / "configs/examples/profile_demo.json"), "configs/examples")],

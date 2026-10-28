@@ -24,4 +24,4 @@ if (-not $SkipTests) {
 & $pythonExe -m PyInstaller --clean --noconfirm "$root\deploy\windows\opd-cli.spec"
 & $pythonExe -m PyInstaller --clean --noconfirm "$root\deploy\windows\opd-gui.spec"
 
-Write-Host "Сборка завершена. Артефакты: $root\dist\opd\opd.exe и $root\dist\opd-gui\opd-gui.exe"
+Write-Host "Сборка завершена. Артефакты: $root\dist\opd.exe и $root\dist\opd-gui.exe"

@@ -13,7 +13,8 @@
 - Добавлен `scripts/smoke_windows.ps1`: `check` и `calculate` на контрольном четырёхфайловом комплекте.
 - Добавлена инструкция [windows-stage6-testing.md](../../../docs/development/windows-stage6-testing.md).
 - На Linux исходный проект проверен: `80 passed`, `compileall` и `git diff --check` успешны.
+- После исправления package entry points PyInstaller 6.11.1 собрал CLI и GUI на Linux. Упакованный CLI прошёл `check` и `calculate` на `PAK_export_reference_4files_v1.zip`; GUI-бинарник оставался запущенным 5 секунд в `QT_QPA_PLATFORM=offscreen`.
 
 ## Ограничения
 
-PyInstaller отсутствует в текущем Linux `.venv`, поэтому фактическая сборка `.exe` не выполнялась. Windows 10/11, установка, GUI-smoke, реальный ПАК, предельный объём и согласованные критерии времени/памяти остаются открытыми. Статусы требований не повышались по наличию скриптов.
+Локальная сборка выполнена под Linux и создаёт Linux-бинарники, не Windows `.exe`. Windows 10/11, установка, GUI-smoke на Windows, реальный ПАК, предельный объём и согласованные критерии времени/памяти остаются открытыми. Статусы требований не повышались до полного Windows-протокола.

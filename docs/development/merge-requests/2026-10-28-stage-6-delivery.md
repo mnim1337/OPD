@@ -9,7 +9,7 @@
 - Linux: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` — **80 passed**.
 - `python -m py_compile deploy/windows/opd-cli.spec deploy/windows/opd-gui.spec` — успешно.
 - `git diff --check` — успешно.
-- Windows `.exe`, установка и smoke-проверка пока не выполнялись: PyInstaller отсутствует в Linux `.venv`.
+- PyInstaller 6.11.1 локально собрал Linux-варианты CLI и GUI; упакованный CLI прошёл `check`/`calculate` на эталонном комплекте, GUI запускался 5 секунд в offscreen-режиме. Windows `.exe`, установка и smoke-проверка на Windows пока не выполнялись.
 
 ## Как проверить на Windows
 
@@ -17,7 +17,7 @@
 2. Запустить `Set-ExecutionPolicy -Scope Process Bypass`.
 3. Запустить `.\scripts\build_windows.ps1`.
 4. Запустить `.\scripts\smoke_windows.ps1`.
-5. Открыть `.\dist\opd-gui\opd-gui.exe` и пройти импорт, загрузку Ω, расчёт и открытие результата.
+5. Открыть `.\dist\opd-gui.exe` и пройти импорт, загрузку Ω, расчёт и открытие результата.
 
 Подробности: [windows-stage6-testing.md](../../development/windows-stage6-testing.md).
 

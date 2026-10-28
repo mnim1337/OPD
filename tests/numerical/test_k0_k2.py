@@ -193,6 +193,20 @@ def test_partial_packet_and_channel_counter_produce_bounds(controls) -> None:
     assert result.integral.status == "interval"
 
 
+def test_last_packet_is_included_in_loss_calculation(controls) -> None:
+    experiments, profile = controls
+    experiment = copy.deepcopy(experiments[0][0])
+    packets = experiment.tables["packets.csv"]
+    assert len(packets) == 480
+    baseline = calculate(experiment, profile)
+    assert baseline.metrics["P_pot"].raw.status == "exact"
+    packets[-1]["observation_status"] = "partial"
+    changed = calculate(experiment, profile)
+    loss = changed.metrics["P_pot"].raw
+    assert loss.status == "interval"
+    assert loss.upper - loss.lower == D(1) / D(len(packets))
+
+
 def test_uncertain_clock_does_not_yield_false_exact_times(controls) -> None:
     experiments, profile = controls
     experiment = copy.deepcopy(experiments[0][0])

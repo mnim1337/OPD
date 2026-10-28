@@ -32,6 +32,24 @@ from scanner.io.storage import DraftStore
 ROOT = Path(__file__).resolve().parents[2]
 CONTROL_ARCHIVE = ROOT / "requirements/эксперимент 5 штук/PAK_5_experiments_with_validation.zip"
 
+
+def test_hidden_table_rows_remain_in_calculation_input(reference_folder: Path, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    imported = read_folder(reference_folder)
+    window = MainWindow(tmp_path / "hidden-rows.sqlite3")
+    window._set_experiment(imported)
+    packets = window.tables["packets.csv"]
+    expected_count = len(imported.tables["packets.csv"])
+    packets.search.setText("no-such-packet")
+    assert packets.model.rowCount() == expected_count
+    assert all(packets.view.isRowHidden(index) for index in range(expected_count))
+    reconstructed, _ = window._experiment()
+    assert len(reconstructed.tables["packets.csv"]) == expected_count
+    assert reconstructed.tables["packets.csv"][-1] == imported.tables["packets.csv"][-1]
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
 def test_result_table_preserves_unknown_and_open_interval_states() -> None:
     app = QApplication.instance() or QApplication([])
     payload = {

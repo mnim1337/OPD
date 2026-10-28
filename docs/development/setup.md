@@ -23,7 +23,7 @@ cd /c/path/to/OPD  # заменить на путь к своему катало
 PYTHONPATH=src /ucrt64/bin/python -m scanner.gui
 ```
 
-Пакет MSYS2 PySide6 версии 6.12.0 включает Qt Widgets. Этот способ проверен только на запуск GUI в пользовательской Windows 11; сборка `.exe` и полный набор испытаний на Windows ещё не выполнялись. Для стандартной установки через `pip` требуется обычная сборка CPython для Windows x64, а не Python из MSYS2.
+Пакет MSYS2 PySide6 версии 6.12.0 включает Qt Widgets. Этот способ проверен только на запуск GUI в пользовательской Windows 11; сборка `.exe` и полный набор испытаний на Windows ещё не выполнялись. Для стандартной установки через `pip` требуется обычная сборка CPython для Windows x64, а не Python из MSYS2. Для сборки тестового `.exe` используйте [инструкцию поставки Windows](windows-stage6-testing.md) и `scripts/build_windows.ps1`.
 
 Команды CLI:
 

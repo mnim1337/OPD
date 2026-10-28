@@ -11,6 +11,7 @@ dependencies = ["PySide6_Essentials==6.12.0"]
 
 [project.optional-dependencies]
 test = ["pytest==8.4.2"]
+package = ["PyInstaller==6.11.1", "pytest==8.4.2"]
 
 [project.scripts]
 opd = "scanner.cli:main"

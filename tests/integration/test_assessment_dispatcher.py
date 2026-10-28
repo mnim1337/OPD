@@ -188,6 +188,9 @@ def test_comparability_ignores_measured_outcomes_but_checks_conditions(
     second.passport["network"]["network_id"] = "different-network"
     assert comparability_reasons(first, profile, second, profile) == ["Состав или исходное состояние сети"]
     second.passport["network"]["network_id"] = first.passport["network"]["network_id"]
+    second.passport["traffic"]["flows"][0]["flow_id"] = "different-flow"
+    assert comparability_reasons(first, profile, second, profile) == ["Заданный состав или генерация потоков"]
+    second.passport["traffic"] = copy.deepcopy(first.passport["traffic"])
     if second.passport.get("scenario", {}).get("events"):
         second.passport["scenario"]["events"][0]["scheduled_time_s"] += 1
         assert comparability_reasons(first, profile, second, profile) == ["Внешние события и их расписание"]

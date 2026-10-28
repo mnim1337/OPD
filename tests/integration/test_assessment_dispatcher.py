@@ -112,6 +112,26 @@ def test_failed_result_write_can_be_retried_without_recalculation(tmp_path: Path
     assert len(store.list_assessments()) == 1
 
 
+def test_new_profile_version_keeps_previous_assessment(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    profile = json.loads((Path(__file__).resolve().parents[2] / "configs/examples/profile_demo.json").read_text())
+    experiment = read_folder(reference_folder)
+    store = DraftStore(tmp_path / "profile-versions.sqlite3")
+    first_id, first_revision, first_payload = calculate_and_save(store, "versioned", experiment, profile)
+    revised_profile = copy.deepcopy(profile)
+    revised_profile["metrics"]["P_zad"]["points"][1][0] += 0.01
+    second_id, second_revision, second_payload = calculate_and_save(
+        store, "versioned", experiment, revised_profile,
+    )
+    assert second_id != first_id
+    assert second_revision == first_revision + 1
+    assert first_payload["profile_version"] == 1
+    assert second_payload["profile_version"] == 2
+    assert store.load_assessment(first_id) == (first_payload, experiment, profile)
+    assert store.load_assessment(second_id) == (second_payload, experiment, revised_profile)
+
+
 def test_sqlite_write_abort_preserves_old_assessment_and_retry_payload(
     reference_folder: Path, tmp_path: Path,
 ) -> None:

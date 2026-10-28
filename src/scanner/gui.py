@@ -35,6 +35,7 @@ from .core.runner import CalculationCancelled
 from .core.prepare import prepare
 from .core.scoring import expert_weights
 from .core.sensitivity import analyze_saved_sensitivity
+from .core.repeats import analyze_saved_repeats
 
 
 METRIC_LABELS = {
@@ -1455,6 +1456,47 @@ class ComparisonDialog(QDialog):
         return str(value.get("status", "unknown"))
 
 
+class RepeatStatisticsDialog(QDialog):
+    """Descriptive K3 statistics for saved runs; no independence claim."""
+
+    def __init__(self, report: dict[str, Any], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.report = report
+        self.setWindowTitle("Статистика повторов К3")
+        self.resize(820, 420)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            f"Сценарий: {report['scenario_id']} · алгоритм: {report['algorithm_id']} · "
+            f"профиль Ω: {report['profile_id']} · опытов: {report['count']}"
+        ))
+        layout.addWidget(QLabel(
+            f"Средний итог по (3.53): {_display_number(report['mean_points_3_53'])} балла; "
+            f"выборочное стандартное отклонение по (3.55): "
+            f"{_display_number(report['sample_standard_deviation_points_3_55'])} балла."
+        ))
+        note = QLabel(
+            "Только описательные значения. Разные ID и членство в серии не доказывают независимость. "
+            "Стандартная ошибка и интервал Стьюдента не показаны без обоснованных предпосылок."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        table = QTableWidget(len(report["runs"]), 3)
+        table.setObjectName("repeatStatisticsTable")
+        table.setHorizontalHeaderLabels(["Опыт", "Повтор", "Iᵣ(A), баллы"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        for row, item in enumerate(report["runs"]):
+            for column, value in enumerate((item["experiment_id"], item["repeat_id"],
+                                            _display_number(item["integral_points"]))):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+                if column == 2:
+                    table.item(row, column).setToolTip(item["integral_points"])
+        layout.addWidget(table)
+        done = QPushButton("Закрыть")
+        done.clicked.connect(self.accept)
+        layout.addWidget(done)
+
+
 class SeriesManagerDialog(QDialog):
     def __init__(self, store: DraftStore, parent: QWidget | None = None,
                  assessment_id: str | None = None):
@@ -1484,6 +1526,10 @@ class SeriesManagerDialog(QDialog):
             button.clicked.connect(callback)
             rows.addWidget(button)
         layout.addLayout(rows)
+        repeat_button = QPushButton("Статистика повторов К3")
+        repeat_button.setObjectName("repeatStatisticsAction")
+        repeat_button.clicked.connect(self.show_repeat_statistics)
+        layout.addWidget(repeat_button)
         done = QPushButton("Закрыть")
         done.clicked.connect(self.accept)
         layout.addWidget(done)
@@ -1578,6 +1624,25 @@ class SeriesManagerDialog(QDialog):
         callback = getattr(self.parent_window, "compare_series", None)
         if callable(callback):
             callback(series_id)
+
+    def show_repeat_statistics(self) -> None:
+        series_id = self.series_combo.currentData()
+        if series_id is None:
+            QMessageBox.information(self, "Статистика повторов К3", "Сначала выберите серию")
+            return
+        try:
+            entries = self.store.series_assessments(series_id)
+            if len(entries) < 2:
+                raise ValueError("Для разброса нужны хотя бы два сохранённых опыта")
+            records = []
+            for assessment_id, *_rest in entries:
+                payload, experiment, profile = self.store.load_assessment(assessment_id)
+                records.append((experiment, payload, profile))
+            report = analyze_saved_repeats(records)
+        except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            QMessageBox.information(self, "Статистика повторов К3", str(exc))
+            return
+        RepeatStatisticsDialog(report, self).exec()
 
 
 def _value_type(value: Any) -> str:

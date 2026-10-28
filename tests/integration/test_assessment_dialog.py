@@ -22,10 +22,11 @@ from scanner.core.dispatcher import calculate_and_save
 import scanner.gui as gui_module
 from scanner.gui import (
     AssessmentDialog, AssessmentWorker, ComparisonDialog, MainWindow, NetworkMark, PassportEditor,
-    SeriesManagerDialog, TableEditor, TimelineChart, ProfileEditor,
+    SeriesManagerDialog, RepeatStatisticsDialog, TableEditor, TimelineChart, ProfileEditor,
 )
 from scanner.io.format import read_folder
 from scanner.io.profile import validate_profile
+from scanner.io.storage import DraftStore
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -286,6 +287,61 @@ def test_saved_comparison_offers_k3_without_recalculating(reference_folder: Path
     assert "К3 недоступен" in result.text()
     dialog.close()
     dialog.deleteLater()
+    app.processEvents()
+
+
+def test_series_manager_shows_saved_repeat_statistics_without_recalculation(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    first = read_folder(reference_folder)
+    second = copy.deepcopy(first)
+    first.passport["repeat_id"] = 1
+    second.passport["repeat_id"] = 2
+    second.passport["experiment_id"] = "REF_ROUTING_002"
+    for rows in second.tables.values():
+        for row in rows:
+            row["experiment_id"] = "REF_ROUTING_002"
+    second.tables["channels.csv"][0]["tx_routing_bytes"] += 100
+    profile = json.loads((ROOT / "configs/examples/profile_demo.json").read_text(encoding="utf-8"))
+    store = DraftStore(tmp_path / "repeats.sqlite3")
+    first_id, _, _ = calculate_and_save(store, "first", first, profile)
+    second_id, _, _ = calculate_and_save(store, "second", second, profile)
+    series_id = store.create_series("Один сценарий")
+    store.add_to_series(series_id, first_id)
+    store.add_to_series(series_id, second_id)
+    manager = SeriesManagerDialog(store)
+    assert manager.findChild(QPushButton, "repeatStatisticsAction") is not None
+    monkeypatch.setattr("scanner.core.repeats.calculate", lambda *_a, **_k: pytest.fail("recalculated"))
+    shown = []
+    monkeypatch.setattr(RepeatStatisticsDialog, "exec", lambda dialog: shown.append(dialog.report))
+    manager.show_repeat_statistics()
+    assert len(shown) == 1
+    assert shown[0]["count"] == 2
+    assert shown[0]["student_interval_3_56"] is None
+    assert shown[0]["independence_basis"] is None
+    details = RepeatStatisticsDialog(shown[0])
+    table = details.findChild(QTableWidget, "repeatStatisticsTable")
+    assert table.rowCount() == 2
+    assert any("не доказывают независимость" in label.text() for label in details.findChildren(QLabel))
+    details.close()
+    details.deleteLater()
+    other = copy.deepcopy(second)
+    other.passport["experiment_id"] = "REF_ROUTING_003"
+    other.passport["repeat_id"] = 3
+    other.passport["scenario_id"] = "OTHER_SCENARIO"
+    for rows in other.tables.values():
+        for row in rows:
+            row["experiment_id"] = "REF_ROUTING_003"
+    other_id, _, _ = calculate_and_save(store, "other", other, profile)
+    store.add_to_series(series_id, other_id)
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, _title, message: messages.append(message))
+    manager.show_repeat_statistics()
+    assert any("scenario_id" in message for message in messages)
+    assert len(shown) == 1
+    manager.close()
+    manager.deleteLater()
     app.processEvents()
 
 

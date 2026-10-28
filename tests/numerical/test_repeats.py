@@ -9,7 +9,7 @@ from zipfile import ZipFile
 import pytest
 
 from scanner.core import calculate
-from scanner.core.repeats import analyze_repeats
+from scanner.core.repeats import analyze_repeats, analyze_saved_repeats
 from scanner.io.format import read_folder
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,3 +93,16 @@ def test_five_control_scenarios_are_not_statistical_repeats(tmp_path: Path) -> N
     profile = json.loads((ROOT / "configs/examples/profile_demo.json").read_text(encoding="utf-8"))
     with pytest.raises(ValueError, match="scenario_id|алгоритмы|Несопоставимые"):
         analyze_repeats(experiments, profile)
+
+
+def test_saved_repeats_use_recorded_integrals_and_reject_mixed_models(runs, monkeypatch) -> None:
+    first, second, profile = runs
+    records = [(item, calculate(item, profile).as_dict(), profile) for item in (first, second)]
+    monkeypatch.setattr("scanner.core.repeats.calculate", lambda *_a, **_k: pytest.fail("recalculated"))
+    report = analyze_saved_repeats(records)
+    assert report["count"] == 2
+    assert report["student_interval_3_56"] is None
+    assert report["standard_error_points_3_55"] is None
+    records[1][1]["model_version"] = "other"
+    with pytest.raises(ValueError, match="версию расчётной модели"):
+        analyze_saved_repeats(records)

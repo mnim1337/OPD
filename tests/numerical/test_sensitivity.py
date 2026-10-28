@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from scanner.core.sensitivity import analyze_sensitivity, max_scale_slope
+from scanner.core import calculate
+from scanner.core.sensitivity import analyze_sensitivity, analyze_saved_sensitivity, max_scale_slope
 from scanner.io.format import read_folder
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,10 +62,22 @@ def test_sensitivity_rejects_incomparable_or_inexact_inputs(comparable_pair) -> 
     with pytest.raises(ValueError, match="несопоставимы"):
         analyze_sensitivity(first, second, profile)
     first.passport["measurement"]["clock_error_bound_s"] = 0.02
-    with pytest.raises(ValueError, match="точных итоговых"):
+    with pytest.raises(ValueError, match="точного значения: итог"):
         analyze_sensitivity(first, second, profile)
     with pytest.raises(ValueError, match="от 0 до 2"):
         analyze_sensitivity(first, second, profile, -1)
+
+
+def test_saved_sensitivity_uses_persisted_values_without_recalculation(comparable_pair, monkeypatch) -> None:
+    first, second, profile = comparable_pair
+    left = calculate(first, profile).as_dict()
+    right = calculate(second, profile).as_dict()
+    monkeypatch.setattr("scanner.core.sensitivity.calculate", lambda *_a, **_k: pytest.fail("recalculated"))
+    report = analyze_saved_sensitivity(first, left, profile, second, right, profile, "0.01")
+    assert D(report["score_difference_points_3_51"]) > 0
+    right["model_version"] = "other-model"
+    with pytest.raises(ValueError, match="версии расчётной модели"):
+        analyze_saved_sensitivity(first, left, profile, second, right, profile)
 
 
 def test_cli_sensitivity_writes_json(reference_folder: Path, tmp_path: Path) -> None:

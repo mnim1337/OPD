@@ -47,39 +47,74 @@ def analyze_sensitivity(first: Experiment, second: Experiment,
     epsilon_weight is an L1 radius of admissible nonnegative weight vectors
     with unit sum. A failed sufficient condition is reported as inconclusive.
     """
-    radius = _nonnegative_number(epsilon_weight)
     resolved = resolve_profile(profile)
     reasons = comparability_reasons(first, resolved, second, resolved)
     if reasons:
         raise ValueError("Опыты несопоставимы: " + "; ".join(reasons))
+    left = calculate(first, resolved).as_dict()
+    right = calculate(second, resolved).as_dict()
+    return analyze_saved_sensitivity(first, left, resolved, second, right, resolved, epsilon_weight)
+
+
+def _exact(payload: dict[str, Any], description: str) -> Decimal:
+    if payload.get("status") != "exact" or payload.get("value") is None:
+        raise ValueError(f"К3 требует точного значения: {description}")
+    try:
+        value = D(str(payload["value"]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"К3 получил неверное число: {description}") from exc
+    if not value.is_finite():
+        raise ValueError(f"К3 требует конечного числа: {description}")
+    return value
+
+
+def analyze_saved_sensitivity(first: Experiment, first_result: dict[str, Any],
+                              first_profile: dict[str, Any], second: Experiment,
+                              second_result: dict[str, Any], second_profile: dict[str, Any],
+                              epsilon_weight: Decimal | int | str = 0) -> dict[str, Any]:
+    """Analyze persisted K2 results without recalculating observations or changing history."""
+    radius = _nonnegative_number(epsilon_weight)
+    left_profile = resolve_profile(first_profile)
+    right_profile = resolve_profile(second_profile)
+    reasons = comparability_reasons(first, left_profile, second, right_profile)
+    if reasons:
+        raise ValueError("Опыты несопоставимы: " + "; ".join(reasons))
+    if first_result.get("model_version") != second_result.get("model_version"):
+        raise ValueError("К3 требует одинаковой версии расчётной модели")
+    if (first_result.get("profile_id") != left_profile.get("profile_id") or
+            second_result.get("profile_id") != right_profile.get("profile_id")):
+        raise ValueError("Сохранённая оценка не соответствует выбранному профилю Ω")
+    if first_result.get("experiment_id") != first.experiment_id or second_result.get("experiment_id") != second.experiment_id:
+        raise ValueError("Сохранённая оценка не соответствует выбранному входу")
     with localcontext() as context:
         context.prec = 50
-        left = calculate(first, resolved)
-        right = calculate(second, resolved)
-        if left.integral.status != "exact" or right.integral.status != "exact":
-            raise ValueError("К3 требует точных итоговых оценок обоих опытов")
+        left_total = _exact(first_result["integral"], "итог первого опыта")
+        right_total = _exact(second_result["integral"], "итог второго опыта")
         indicator_terms: dict[str, dict[str, str]] = {}
         raw_bound = D(0)
         normalized_delta = D(0)
         for key in METRICS:
-            a = left.metrics[key]
-            b = right.metrics[key]
-            if a.raw.status != "exact" or b.raw.status != "exact":
-                raise ValueError(f"К3 требует точного физического показателя {key} в обоих опытах")
-            if a.normalized.status != "exact" or b.normalized.status != "exact":
-                raise ValueError(f"К3 требует точной нормализации {key} в обоих опытах")
-            slope = max_scale_slope(resolved["metrics"][key]["points"])
-            physical_change = abs(a.raw.exact_value - b.raw.exact_value)
-            term = D(100) * a.weight * slope * physical_change
+            a = first_result["metrics"][key]
+            b = second_result["metrics"][key]
+            left_raw = _exact(a["raw"], f"физический показатель {key} первого опыта")
+            right_raw = _exact(b["raw"], f"физический показатель {key} второго опыта")
+            left_normal = _exact(a["normalized"], f"нормализация {key} первого опыта")
+            right_normal = _exact(b["normalized"], f"нормализация {key} второго опыта")
+            weight = D(str(left_profile["metrics"][key]["weight"]))
+            if D(str(a["weight"])) != weight or D(str(b["weight"])) != weight:
+                raise ValueError(f"Сохранённый вес {key} не соответствует выбранному профилю Ω")
+            slope = max_scale_slope(left_profile["metrics"][key]["points"])
+            physical_change = abs(left_raw - right_raw)
+            term = D(100) * weight * slope * physical_change
             raw_bound += term
-            normalized_delta += D(100) * a.weight * (a.normalized.exact_value - b.normalized.exact_value)
+            normalized_delta += D(100) * weight * (left_normal - right_normal)
             indicator_terms[key] = {
                 "slope_per_unit": str(slope),
                 "physical_change": str(physical_change),
                 "contribution_to_bound_points": str(term),
-                "unit": a.raw.unit,
+                "unit": a["raw"]["unit"],
             }
-        actual_delta = left.integral.exact_value - right.integral.exact_value
+        actual_delta = left_total - right_total
         if abs(actual_delta - normalized_delta) > D("1e-40"):
             raise ArithmeticError("Разность К3 не согласуется с сохранёнными вкладами К2")
         weight_bound = D(50) * radius
@@ -93,8 +128,8 @@ def analyze_sensitivity(first: Experiment, second: Experiment,
         return {
             "first_experiment_id": first.experiment_id,
             "second_experiment_id": second.experiment_id,
-            "model_version": left.model_version,
-            "profile_id": left.profile_id,
+            "model_version": first_result["model_version"],
+            "profile_id": first_result["profile_id"],
             "epsilon_weight_l1": str(radius),
             "indicators": indicator_terms,
             "physical_change_bound_points_3_48": str(raw_bound),

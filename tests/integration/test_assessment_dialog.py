@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import copy
 import time
 import pytest
 from pathlib import Path
@@ -254,6 +255,37 @@ def test_comparison_view_explains_incomparable_conditions_without_ranking() -> N
     comparable.close()
     incomparable.deleteLater()
     comparable.deleteLater()
+    app.processEvents()
+
+
+def test_saved_comparison_offers_k3_without_recalculating(reference_folder: Path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    first = read_folder(reference_folder)
+    second = copy.deepcopy(first)
+    second.passport["experiment_id"] = "REF_ROUTING_002"
+    for rows in second.tables.values():
+        for row in rows:
+            row["experiment_id"] = "REF_ROUTING_002"
+    second.tables["channels.csv"][0]["tx_routing_bytes"] += 100
+    profile = json.loads((ROOT / "configs/examples/profile_demo.json").read_text(encoding="utf-8"))
+    left = calculate(first, profile).as_dict()
+    right = calculate(second, profile).as_dict()
+    monkeypatch.setattr("scanner.core.sensitivity.calculate", lambda *_a, **_k: pytest.fail("recalculated"))
+    dialog = ComparisonDialog(left, right, [], first_context=(first, profile), second_context=(second, profile))
+    analyze = dialog.findChild(QPushButton, "sensitivityAnalyze")
+    radius = dialog.findChild(QLineEdit, "sensitivityRadius")
+    result = dialog.findChild(QLabel, "sensitivityResult")
+    assert analyze.isEnabled()
+    analyze.click()
+    assert "Преимущество первого сохраняется" in result.text()
+    radius.setText("2")
+    analyze.click()
+    assert "смена предпочтения не доказана" in result.text()
+    right["integral"]["status"] = "interval"
+    analyze.click()
+    assert "К3 недоступен" in result.text()
+    dialog.close()
+    dialog.deleteLater()
     app.processEvents()
 
 

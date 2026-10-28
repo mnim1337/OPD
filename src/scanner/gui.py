@@ -34,6 +34,7 @@ from .core.dispatcher import DispatchError, ResultPersistenceError, calculate_an
 from .core.runner import CalculationCancelled
 from .core.prepare import prepare
 from .core.scoring import expert_weights
+from .core.sensitivity import analyze_saved_sensitivity
 
 
 METRIC_LABELS = {
@@ -1357,10 +1358,12 @@ class AssessmentDialog(QWidget):
 
 class ComparisonDialog(QDialog):
     def __init__(self, first: dict[str, Any], second: dict[str, Any], reasons: list[str],
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None, *,
+                 first_context: tuple[Experiment, dict[str, Any]] | None = None,
+                 second_context: tuple[Experiment, dict[str, Any]] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Сравнение сохранённых оценок")
-        self.resize(1000, 500)
+        self.resize(1000, 620)
         layout = QVBoxLayout(self)
         if reasons:
             layout.addWidget(QLabel(
@@ -1377,6 +1380,47 @@ class ComparisonDialog(QDialog):
         layout.addWidget(QLabel("Цвета соответствуют показателям: " + "; ".join(
             f"{METRIC_LABELS[key]} ({key})" for key in METRIC_LABELS
         )))
+        if first_context is not None and second_context is not None:
+            sensitivity_controls = QHBoxLayout()
+            sensitivity_controls.addWidget(QLabel("Радиус изменения весов L1 (0–2):"))
+            radius = QLineEdit("0")
+            radius.setObjectName("sensitivityRadius")
+            sensitivity_controls.addWidget(radius)
+            analyze = QPushButton("Анализ чувствительности К3")
+            analyze.setObjectName("sensitivityAnalyze")
+            analyze.setEnabled(not reasons)
+            sensitivity_controls.addWidget(analyze)
+            layout.addLayout(sensitivity_controls)
+            sensitivity_result = QLabel("К3 использует сохранённые оценки без перерасчёта.")
+            sensitivity_result.setObjectName("sensitivityResult")
+            sensitivity_result.setWordWrap(True)
+            layout.addWidget(sensitivity_result)
+
+            def show_sensitivity() -> None:
+                try:
+                    report = analyze_saved_sensitivity(
+                        first_context[0], first, first_context[1],
+                        second_context[0], second, second_context[1], radius.text(),
+                    )
+                except (ValueError, KeyError, ArithmeticError) as exc:
+                    sensitivity_result.setText(f"К3 недоступен: {exc}")
+                    return
+                meaning = {
+                    "first_remains_higher": "Преимущество первого сохраняется в заданном радиусе весов.",
+                    "second_remains_higher": "Преимущество второго сохраняется в заданном радиусе весов.",
+                    "inconclusive": "Достаточное условие не выполнено; смена предпочтения не доказана.",
+                }[report["conclusion"]]
+                sensitivity_result.setText(
+                    f"К3, (3.47)–(3.52): ΔI₁₂ = {_display_number(report['score_difference_points_3_51'])} балла.\n"
+                    f"Граница по показателям: {_display_number(report['physical_change_bound_points_3_48'])}; "
+                    f"по весам: {_display_number(report['weight_change_bound_points_3_49'])}; "
+                    f"совместная: {_display_number(report['joint_change_bound_points_3_50'])} балла.\n"
+                    f"Граница изменения разности: {_display_number(report['difference_change_bound_points_3_52'])} балла. "
+                    + meaning
+                )
+                sensitivity_result.setToolTip(json.dumps(report, ensure_ascii=False, indent=2))
+
+            analyze.clicked.connect(show_sensitivity)
         metrics = list(first.get("metrics", {}))
         table = QTableWidget(len(metrics), 7)
         table.setHorizontalHeaderLabels(["Показатель", "B₁", "B₂", "K₁", "K₂", "Статус 1", "Статус 2"])
@@ -3896,7 +3940,9 @@ class MainWindow(QMainWindow):
             self._error(exc)
             return
         reasons = comparability_reasons(first_experiment, first_profile, second_experiment, second_profile)
-        ComparisonDialog(first, second, reasons, self).exec()
+        ComparisonDialog(first, second, reasons, self,
+                         first_context=(first_experiment, first_profile),
+                         second_context=(second_experiment, second_profile)).exec()
 
     def compare_series(self, series_id: str) -> None:
         try:
@@ -3925,7 +3971,9 @@ class MainWindow(QMainWindow):
             self._error(exc)
             return
         reasons = comparability_reasons(first_experiment, first_profile, second_experiment, second_profile)
-        ComparisonDialog(first, second, reasons, self).exec()
+        ComparisonDialog(first, second, reasons, self,
+                         first_context=(first_experiment, first_profile),
+                         second_context=(second_experiment, second_profile)).exec()
 
     def manage_series(self) -> None:
         SeriesManagerDialog(self.store, self).exec()

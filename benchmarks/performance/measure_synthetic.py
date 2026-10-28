@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import shlex
 import subprocess
@@ -64,7 +65,8 @@ def main() -> int:
         "finished_utc": None,
         "purpose": "Предварительное время К0–К2 на пяти синтетических контрольных опытах",
         "method": "Последовательный импорт и calculate каждого комплекта в одном процессе; perf_counter_ns и tracemalloc peak",
-        "command": shlex.join(sys.argv),
+        "command": f"PYTHONPATH={shlex.quote(os.environ.get('PYTHONPATH', ''))} "
+                   + shlex.join([sys.executable, *sys.argv]),
         "parameters": {"case_count_expected": 5, "timing_unit": "s", "memory_unit": "byte"},
         "code_commit": commit,
         "tree_state": "clean" if not tree else tree,
@@ -74,8 +76,9 @@ def main() -> int:
         "reference": None,
         "reference_reason": "Численная точность в этом запуске не оценивается; отдельный контроль находится в tests/numerical.",
         "environment": {"platform": platform.platform(), "python": sys.version.split()[0],
-                        "processor": platform.processor()},
-        "dependencies": {"PySide6_Essentials": _dependency("PySide6_Essentials")},
+                        "processor": platform.processor(), "pythonpath": os.environ.get("PYTHONPATH")},
+        "dependencies": {"opd-scanner": _dependency("opd-scanner"),
+                         "PySide6_Essentials": _dependency("PySide6_Essentials")},
         "seed": None,
         "seed_reason": "Случайные процедуры в измерении не применяются.",
         "accuracy": None,

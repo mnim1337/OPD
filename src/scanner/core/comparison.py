@@ -29,6 +29,7 @@ def _stable(value: Any) -> Any:
 
 def _signature(experiment: Experiment, profile: dict[str, Any]) -> dict[str, Any]:
     passport = experiment.passport
+    environment = passport.get("environment", {})
     events = passport.get("scenario", {}).get("events", [])
     event_conditions = [
         {key: _stable(event.get(key)) for key in (
@@ -39,6 +40,13 @@ def _signature(experiment: Experiment, profile: dict[str, Any]) -> dict[str, Any
     return {
         "network": _stable(passport.get("network", {})),
         "traffic": _stable(passport.get("traffic", {})),
+        "environment": _stable({
+            key: environment.get(key) for key in (
+                "execution_source", "pak_version", "time_mode", "hardware_description",
+                "queue_discipline", "buffer_limit_bytes", "link_errors",
+            )
+        } | {"randomness_used": environment.get("randomness", {}).get("used")}),
+        # Distinct random seeds are expected between independent repeated runs.
         # Actual execution time and success are observations; compare the planned intervention.
         "events": event_conditions,
         "measurement": _stable(passport.get("measurement", {})),
@@ -52,6 +60,7 @@ def comparability_reasons(first: Experiment, first_profile: dict[str, Any],
     labels = {
         "network": "Состав или исходное состояние сети",
         "traffic": "Заданный состав или генерация потоков",
+        "environment": "Условия выполнения, очереди, буферы или модель ошибок",
         "events": "Внешние события и их расписание",
         "measurement": "Область, окно или методика наблюдений и проверок",
         "scales_and_weights": "Шкалы нормализации или веса профиля Ω",

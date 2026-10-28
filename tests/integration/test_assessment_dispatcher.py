@@ -112,6 +112,34 @@ def test_failed_result_write_can_be_retried_without_recalculation(tmp_path: Path
     assert len(store.list_assessments()) == 1
 
 
+def test_sqlite_write_abort_preserves_old_assessment_and_retry_payload(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    profile = json.loads((Path(__file__).resolve().parents[2] / "configs/examples/profile_demo.json").read_text())
+    experiment = read_folder(reference_folder)
+    store = DraftStore(tmp_path / "drafts.sqlite3")
+    old_id, old_revision, old_payload = calculate_and_save(store, "failure-check", experiment, profile)
+    with store._connect() as db:
+        db.execute("""CREATE TRIGGER reject_new_assessment BEFORE INSERT ON assessments
+                      BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END""")
+    with pytest.raises(ResultPersistenceError) as caught:
+        calculate_and_save(store, "failure-check", experiment, profile)
+    pending = caught.value
+    assert pending.revision == old_revision + 1
+    assert pending.payload["integral"] == old_payload["integral"]
+    assert [row[0] for row in store.list_assessments()] == [old_id]
+    assert store.load_assessment(old_id)[0] == old_payload
+    with store._connect() as db:
+        db.execute("DROP TRIGGER reject_new_assessment")
+    saved_id = store.save_assessment(
+        pending.draft_id, pending.revision, pending.profile_id, pending.profile_version,
+        pending.model_version, pending.payload, pending.assessment_id,
+    )
+    assert saved_id == pending.assessment_id
+    assert len(store.list_assessments()) == 2
+    assert store.load_assessment(old_id)[0] == old_payload
+
+
 def test_backup_is_consistent_and_cannot_overwrite_active_store(tmp_path: Path) -> None:
     store = DraftStore(tmp_path / "drafts.sqlite3")
     with pytest.raises(ValueError):
@@ -143,6 +171,35 @@ def test_comparability_ignores_measured_outcomes_but_checks_conditions(
     if second.passport.get("scenario", {}).get("events"):
         second.passport["scenario"]["events"][0]["scheduled_time_s"] += 1
         assert comparability_reasons(first, profile, second, profile) == ["Внешние события и их расписание"]
+
+
+def test_comparability_checks_execution_conditions_but_allows_different_random_seeds(
+    reference_folder: Path,
+) -> None:
+    first = read_folder(reference_folder)
+    second = copy.deepcopy(first)
+    profile = json.loads((Path(__file__).resolve().parents[2] / "configs/examples/profile_demo.json").read_text())
+    first.passport["environment"]["randomness"] = {"used": True, "seeds": {"traffic": 1}}
+    second.passport["environment"]["randomness"] = {"used": True, "seeds": {"traffic": 2}}
+    assert comparability_reasons(first, profile, second, profile) == []
+
+    second.passport["environment"]["queue_discipline"] = "different"
+    assert comparability_reasons(first, profile, second, profile) == [
+        "Условия выполнения, очереди, буферы или модель ошибок"]
+    second.passport["environment"]["queue_discipline"] = first.passport["environment"]["queue_discipline"]
+    second.passport["environment"]["link_errors"] = {"model": "random_loss"}
+    assert comparability_reasons(first, profile, second, profile) == [
+        "Условия выполнения, очереди, буферы или модель ошибок"]
+    second.passport["environment"]["link_errors"] = copy.deepcopy(first.passport["environment"]["link_errors"])
+
+    second.passport["measurement"]["channel_grid_rule"] = "different"
+    assert comparability_reasons(first, profile, second, profile) == [
+        "Область, окно или методика наблюдений и проверок"]
+    second.passport["measurement"] = copy.deepcopy(first.passport["measurement"])
+    changed_profile = copy.deepcopy(profile)
+    changed_profile["metrics"]["P_zad"]["points"][1][0] += 1
+    assert comparability_reasons(first, profile, second, changed_profile) == [
+        "Шкалы нормализации или веса профиля Ω"]
 
 
 def test_cancellation_keeps_pinned_input_but_does_not_store_partial_assessment(

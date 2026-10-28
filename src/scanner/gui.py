@@ -977,7 +977,7 @@ class AssessmentDialog(QWidget):
                                             selected[1][1], selected[1][2])
             compare_note.setText(
                 "Условия несопоставимы; общий рейтинг не формируется: " + "; ".join(reasons)
-                if reasons else "Условия сопоставимы: сеть, нагрузка, события и профиль Ω проверены."
+                if reasons else "Условия сопоставимы: сеть, нагрузка, среда, события, наблюдение и профиль Ω проверены."
             )
             self.series_contribution_chart.assessments = [item[0] for item in selected]
             self.series_contribution_chart.update()

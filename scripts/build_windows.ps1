@@ -9,6 +9,14 @@ $venv = Join-Path $root ".venv-stage6"
 $pythonExe = Join-Path $venv "Scripts\python.exe"
 
 if (-not (Test-Path $pythonExe)) {
+    if ($Python -eq "py -3.12" -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+        if (Get-Command python -ErrorAction SilentlyContinue) {
+            $Python = "python"
+            Write-Host "Команда py не найдена; используется python."
+        } else {
+            throw "Не найден Python. Установите официальный CPython 3.12 x64 или передайте -Python с командой запуска."
+        }
+    }
     Invoke-Expression "$Python -m venv `"$venv`""
 }
 

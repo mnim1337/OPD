@@ -12,7 +12,7 @@ from zipfile import ZipFile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QImage, QPalette
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox, QPushButton, QInputDialog, QLabel, QLineEdit, QPlainTextEdit,
     QTableWidget, QTableWidgetItem, QTabWidget, QComboBox, QDialogButtonBox,
@@ -540,6 +540,50 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     assert editor.value() == original
     editor.deleteLater()
     app.processEvents()
+
+
+def test_input_pages_keep_light_background_with_dark_system_palette(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    original_palette = app.palette()
+    dark_palette = QPalette(original_palette)
+    for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base,
+                 QPalette.ColorRole.AlternateBase, QPalette.ColorRole.Button):
+        dark_palette.setColor(role, QColor("#111111"))
+    app.setPalette(dark_palette)
+    window = None
+    try:
+        window = MainWindow(tmp_path / "dark-palette.sqlite3")
+        window._set_experiment(read_folder(reference_folder))
+        window.show_editor()
+        window.show()
+        app.processEvents()
+
+        def assert_no_dark_panel(page: str) -> None:
+            image = window.grab().toImage()
+            dark_pixels = sum(
+                1 for y in range(220, image.height(), 4)
+                for x in range(0, image.width(), 4)
+                if (color := image.pixelColor(x, y)).red() < 30
+                and color.green() < 30 and color.blue() < 30
+            )
+            assert dark_pixels < 100, f"{page}: {dark_pixels} dark background samples"
+
+        for index in range(window.passport.tabs.count()):
+            window.passport.tabs.setCurrentIndex(index)
+            app.processEvents()
+            assert_no_dark_panel(window.passport.tabs.tabText(index))
+        for index in range(1, window.tabs.count()):
+            window.tabs.setCurrentIndex(index)
+            app.processEvents()
+            assert_no_dark_panel(window.tabs.tabText(index))
+    finally:
+        if window is not None:
+            window.close()
+            window.deleteLater()
+        app.setPalette(original_palette)
+        app.processEvents()
 
 
 def test_algorithm_settings_are_editable_from_passport_dialog(reference_folder: Path,

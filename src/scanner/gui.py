@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPalette, QPen, QPolygonF, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QScrollArea, QSizePolicy,
@@ -55,6 +55,10 @@ CHART_COLORS = [QColor("#2374AB"), QColor("#F18F01"), QColor("#C73E1D"),
 UI_STYLESHEET = """
 QMainWindow, QDialog { background: #f1f5fb; color: #203650; }
 QWidget#workspacePage { background: #f1f5fb; }
+QWidget#passportContent { background: #f1f5fb; }
+QWidget#passportDetailContent { background: #ffffff; }
+QScrollArea#passportScroll { border: 0; background: #f1f5fb; }
+QScrollArea#passportDetailScroll { border: 0; background: #ffffff; }
 QWidget#startPage { background: #153251; }
 QFrame#masthead { background: #142940; border: 0; }
 QLabel#brand { color: #ffffff; font-size: 17px; font-weight: 700; }
@@ -92,11 +96,41 @@ QTableView, QTableWidget, QTreeWidget, QComboBox, QPlainTextEdit {
     background: #ffffff; color: #203650; border: 1px solid #d9e4f2; border-radius: 6px;
     selection-background-color: #e6efff; selection-color: #203650;
 }
+QComboBox QAbstractItemView { background: #ffffff; color: #203650;
+    selection-background-color: #e6efff; selection-color: #203650; }
+QScrollArea { background: #ffffff; border: 0; }
+QWidget#tableDetailContent { background: #ffffff; }
+QTableCornerButton::section { background: #e7effb; border: 0;
+    border-bottom: 1px solid #d9e4f2; }
+QScrollBar:vertical { background: #f1f5fb; width: 12px; margin: 0; }
+QScrollBar:horizontal { background: #f1f5fb; height: 12px; margin: 0; }
+QScrollBar::handle { background: #c5d4e6; border-radius: 5px; min-height: 20px; min-width: 20px; }
+QScrollBar::add-line, QScrollBar::sub-line { background: #f1f5fb; border: 0; }
+QMenu { background: #ffffff; color: #203650; border: 1px solid #d9e4f2; }
+QMenu::item:selected { background: #e6efff; color: #203650; }
 QHeaderView::section { background: #e7effb; color: #617b99; border: 0;
                        border-bottom: 1px solid #d9e4f2; padding: 8px; font-weight: 600; }
 QTableView::item:alternate, QTableWidget::item:alternate { background: #f7f9fd; }
 QStatusBar { background: #f1f5fb; color: #71879f; }
 """
+
+
+def _light_palette() -> QPalette:
+    """Keep unstyled Qt child widgets aligned with the light appendix B pages."""
+    palette = QPalette()
+    for role, color in (
+        (QPalette.ColorRole.Window, "#f1f5fb"),
+        (QPalette.ColorRole.Base, "#ffffff"),
+        (QPalette.ColorRole.AlternateBase, "#f7f9fd"),
+        (QPalette.ColorRole.Button, "#ffffff"),
+        (QPalette.ColorRole.WindowText, "#203650"),
+        (QPalette.ColorRole.Text, "#203650"),
+        (QPalette.ColorRole.ButtonText, "#203650"),
+        (QPalette.ColorRole.Highlight, "#e6efff"),
+        (QPalette.ColorRole.HighlightedText, "#203650"),
+    ):
+        palette.setColor(role, QColor(color))
+    return palette
 
 
 class FullWidthTabs(QTabWidget):
@@ -660,6 +694,7 @@ class AssessmentDialog(QWidget):
         self.setWindowTitle("Результат оценки")
         self.resize(1350, 820)
         self.setObjectName("workspacePage")
+        self.setPalette(_light_palette())
         self.setFont(QFont("Arial", 11))
         self.setStyleSheet(UI_STYLESHEET)
         layout = QVBoxLayout(self)
@@ -1827,6 +1862,8 @@ PASSPORT_LABELS = {
     "note_ru": "Примечание", "execution_source": "Источник исполнения",
     "pak_version": "Версия ПАК", "time_mode": "Режим времени",
     "hardware_description": "Оборудование", "queue_discipline": "Дисциплина очереди",
+    "initial_state_ru": "Начальное состояние", "seeds": "Начальные состояния генераторов",
+    "model": "Модель ошибок",
     "buffer_limit_bytes": "Буфер, байт", "link_errors": "Ошибки каналов",
     "randomness": "Случайность", "used": "Используется",
     "network_id": "Идентификатор сети", "directed": "Направленные каналы",
@@ -1967,6 +2004,7 @@ class PassportEditor(QWidget):
         cell_layout.setSpacing(3)
         caption = QLabel(self._label(key))
         caption.setObjectName("fieldLabel")
+        caption.setWordWrap(True)
         cell_layout.addWidget(caption)
         kind = self._kind(key, value)
         if kind == "boolean":
@@ -2012,11 +2050,14 @@ class PassportEditor(QWidget):
         cell_layout.addWidget(control)
         technical = QLabel(".".join(map(str, path)))
         technical.setObjectName("fieldKey")
+        technical.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        technical.setToolTip(technical.text())
         cell_layout.addWidget(technical)
         return cell
 
     def _fields(self, layout: QVBoxLayout, node: dict[str, Any], path: tuple[str | int, ...],
-                keys: tuple[str, ...] | None = None, wide_keys: frozenset[str] = frozenset()) -> None:
+                keys: tuple[str, ...] | None = None, wide_keys: frozenset[str] = frozenset(),
+                columns: int = 2) -> None:
         selected = [(key, node[key]) for key in (keys or tuple(node)) if key in node]
         scalars = [(key, value) for key, value in selected if not isinstance(value, dict)]
         if scalars:
@@ -2029,12 +2070,12 @@ class PassportEditor(QWidget):
                 if key in wide_keys:
                     if column:
                         row, column = row + 1, 0
-                    grid.addWidget(field, row, 0, 1, 2)
+                    grid.addWidget(field, row, 0, 1, columns)
                     row += 1
                 else:
                     grid.addWidget(field, row, column)
                     column += 1
-                    if column == 2:
+                    if column == columns:
                         row, column = row + 1, 0
             layout.addLayout(grid)
         for key, value in selected:
@@ -2042,11 +2083,11 @@ class PassportEditor(QWidget):
                 heading = QLabel(self._label(key))
                 heading.setObjectName("cardTitle")
                 layout.addWidget(heading)
-                self._fields(layout, value, path + (key,))
+                self._fields(layout, value, path + (key,), columns=columns)
 
     def _card(self, parent: QVBoxLayout, title: str, node: dict[str, Any] | None,
               path: tuple[str | int, ...], keys: tuple[str, ...] | None = None,
-              wide_keys: frozenset[str] = frozenset()) -> QFrame:
+              wide_keys: frozenset[str] = frozenset(), columns: int = 2) -> QFrame:
         card = QFrame()
         card.setObjectName("contentCard")
         content = QVBoxLayout(card)
@@ -2055,7 +2096,7 @@ class PassportEditor(QWidget):
         heading.setObjectName("cardTitle")
         content.addWidget(heading)
         if isinstance(node, dict) and node:
-            self._fields(content, node, path, keys, wide_keys)
+            self._fields(content, node, path, keys, wide_keys, columns)
         else:
             content.addWidget(QLabel("Поля пока не заданы. Их можно добавить в расширенном вводе."))
         content.addStretch()
@@ -2094,6 +2135,7 @@ class PassportEditor(QWidget):
         card_layout.addWidget(heading)
         row = QHBoxLayout()
         table = QTableWidget(0, len(columns))
+        table.verticalHeader().hide()
         table.setHorizontalHeaderLabels([self._label(key) for key in columns])
         table.horizontalHeader().setStretchLastSection(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -2113,7 +2155,10 @@ class PassportEditor(QWidget):
             while detail_layout.count():
                 child = detail_layout.takeAt(0)
                 if child.widget() is not None:
-                    child.widget().deleteLater()
+                    old_widget = child.widget()
+                    old_widget.hide()
+                    old_widget.setParent(None)
+                    old_widget.deleteLater()
                 elif child.layout() is not None:
                     child.layout().deleteLater()
             selected = table.currentRow()
@@ -2122,8 +2167,10 @@ class PassportEditor(QWidget):
                 label.setObjectName("cardTitle")
                 detail_layout.addWidget(label)
                 scroller = QScrollArea()
+                scroller.setObjectName("passportDetailScroll")
                 scroller.setWidgetResizable(True)
                 form = QWidget()
+                form.setObjectName("passportDetailContent")
                 form_layout = QVBoxLayout(form)
                 self._fields(form_layout, array[selected], path + (selected,))
                 form_layout.addStretch()
@@ -2178,8 +2225,10 @@ class PassportEditor(QWidget):
 
     def _section(self, index: int) -> QScrollArea:
         scroll = QScrollArea()
+        scroll.setObjectName("passportScroll")
         scroll.setWidgetResizable(True)
         content = QWidget()
+        content.setObjectName("passportContent")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(8, 12, 8, 12)
         layout.setSpacing(12)
@@ -2200,11 +2249,13 @@ class PassportEditor(QWidget):
             algorithm_layout.insertWidget(algorithm_layout.count() - 1, settings)
             layout.addLayout(cards)
         elif index == 1:
-            self._card(layout, "Среда выполнения и источник", self._get(("environment",)), ("environment",))
+            self._card(layout, "Среда выполнения и источник", self._get(("environment",)),
+                       ("environment",), wide_keys=frozenset({"initial_state_ru", "note_ru"}),
+                       columns=3)
         elif index == 2:
+            self._array_card(layout, "Узлы сети", ("network", "nodes"))
             self._card(layout, "Сеть", self._get(("network",)), ("network",),
                        ("network_id", "directed", "orbital_description"))
-            self._array_card(layout, "Узлы сети", ("network", "nodes"))
         elif index == 3:
             self._array_card(layout, "Направленные соединения", ("network", "links"))
         elif index == 4:
@@ -2320,6 +2371,7 @@ class ProfileEditor(QWidget):
         scales_card_layout = QVBoxLayout(scales_card)
         scales_card_layout.addWidget(QLabel("Физические опоры и нормированные значения", objectName="cardTitle"))
         self.scales_table = QTableWidget(len(METRICS), 4)
+        self.scales_table.verticalHeader().hide()
         self.scales_table.setObjectName("normalizationScales")
         self.scales_table.setHorizontalHeaderLabels(
             ["Показатель", "Единица", "Предпочтение", "Опоры: значение → оценка"])
@@ -2351,6 +2403,7 @@ class ProfileEditor(QWidget):
         expert_layout = QVBoxLayout(expert_card)
         expert_layout.addWidget(QLabel("Значимость перехода от худшей опоры к лучшей", objectName="cardTitle"))
         self.expert_table = QTableWidget(0, 8)
+        self.expert_table.verticalHeader().hide()
         self.expert_table.setObjectName("expertScores")
         self.expert_table.setHorizontalHeaderLabels(["Эксперт / источник", *[METRIC_LABELS[key] for key in METRICS]])
         self.expert_table.horizontalHeader().setStretchLastSection(True)
@@ -2372,6 +2425,7 @@ class ProfileEditor(QWidget):
         expert_layout.addLayout(expert_actions)
         expert_layout.addWidget(QLabel("Полученные веса wᵢ", objectName="cardTitle"))
         self.weights_table = QTableWidget(1, len(METRICS))
+        self.weights_table.verticalHeader().hide()
         self.weights_table.setObjectName("profileWeights")
         self.weights_table.setHorizontalHeaderLabels([METRIC_LABELS[key] for key in METRICS])
         self.weights_table.horizontalHeader().setStretchLastSection(True)
@@ -2703,6 +2757,7 @@ class TableEditor(QWidget):
         self.model = CsvModel(name)
         self.model.changed.connect(self.changed)
         self.view = QTableView()
+        self.view.verticalHeader().hide()
         self.view.setModel(self.model)
         self.view.setObjectName("recordSummary")
         self.view.setEditTriggers(QTableView.EditTrigger.DoubleClicked |
@@ -2749,6 +2804,7 @@ class TableEditor(QWidget):
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setWidgetResizable(True)
         self.detail_content = QWidget()
+        self.detail_content.setObjectName("tableDetailContent")
         self.detail_form = QGridLayout(self.detail_content)
         self.detail_form.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.detail_form.setVerticalSpacing(12)
@@ -2944,6 +3000,7 @@ def empty_passport() -> dict[str, Any]:
 class MainWindow(QMainWindow):
     def __init__(self, store_path: Path):
         super().__init__()
+        self.setPalette(_light_palette())
         self.store = DraftStore(store_path)
         self.draft_id: str | None = None
         self.dirty = False

@@ -2,6 +2,8 @@
 
 ## Подтверждённые сведения
 
+- Источник: локальная проверочная сборка commit `02871d58fdc8f4ca0d3ab281610c860bb41060af`, Wine 9.0, Windows CPython 3.12.10 x64 и PyInstaller 6.11.1, 30.10.2026. Получены PE x64 `opd.exe` и `opd-gui.exe` в `outputs/windows-test/opd-windows-test-0.5.1-wine.zip`; контрольные суммы указаны в архиве. Упакованный CLI под Wine выполнил `check` и `calculate` на эталонном комплекте, GUI не завершился за пять секунд в Qt offscreen. Это подтверждает локальную упаковку и smoke под Wine, но не запуск на Windows 10/11. Результат приватного GitHub Actions workflow пока не прочитан.
+
 - Источник: архив `requirements/PAK_export_reference_4files_v1.zip`, просмотр списка файлов 30.10.2026: четыре контрольных файла лежат непосредственно в корне ZIP. Прежний `scripts/smoke_windows.ps1` ошибочно ожидал вложенную папку; скрипт исправлен на передачу временного каталога CLI. Подготовлен workflow `.github/workflows/windows-test-build.yml` для Windows Server 2022 x64, но результат его удалённого выполнения и работоспособность `.exe` пока неизвестны. Фактический пакет можно считать проверенным лишь после успешного запуска и пользовательской проверки GUI.
 
 - Источник: ветка `feat/stage-6-delivery`, файлы `deploy/windows/*.spec`, `scripts/build_windows.ps1`, `scripts/smoke_windows.ps1`, `docs/development/windows-stage6-testing.md`, 28.10.2026. Подготовлена воспроизводимая схема сборки CLI и GUI через PyInstaller 6.11.1 на официальном CPython 3.12 x64; Linux-проверки исходного кода проходят. Фактический `.exe`, установка и запуск на Windows пока неизвестны и требуют выполнения скриптов на целевой ОС.

@@ -4,7 +4,7 @@
 
 ## Скачать проверочную сборку
 
-Workflow `.github/workflows/windows-test-build.yml` запускается при push в `feat/stage-6-delivery` на Windows Server 2022 x64 с CPython 3.12. После успешных тестов, сборки и smoke-проверки откройте в GitHub **Actions → Windows test build → последний успешный запуск** и скачайте артефакт `opd-windows-test-<номер запуска>`. Артефакт хранится 14 дней. Распакуйте его целиком: `dist\opd-gui.exe` — приложение, `dist\opd.exe` — CLI, `configs\examples\profile_demo.json` — профиль для синтетического контрольного опыта, `requirements\PAK_export_reference_4files_v1.zip` — входной комплект. `dist\BUILD-INFO.txt` содержит commit, версию и SHA-256 обоих `.exe`.
+Workflow `.github/workflows/windows-test-build.yml` запускается при push в `feat/stage-6-delivery` на Windows Server 2022 x64 с CPython 3.12. После успешных тестов, сборки и smoke-проверки откройте в GitHub [Actions → Windows test build](https://github.com/mnim1337/OPD/actions/workflows/windows-test-build.yml) → последний успешный запуск ветки и скачайте артефакт `opd-windows-test-<номер запуска>`. Для приватного репозитория требуется вход в GitHub с доступом к проекту. Артефакт хранится 14 дней. Распакуйте его целиком: `dist\opd-gui.exe` — приложение, `dist\opd.exe` — CLI, `configs\examples\profile_demo.json` — профиль для синтетического контрольного опыта, `requirements\PAK_export_reference_4files_v1.zip` — входной комплект. `dist\BUILD-INFO.txt` содержит commit, версию и SHA-256 обоих `.exe`.
 
 Эта сборка предназначена для проверки, а не для финальной приёмки Windows 10/11. Запуск GUI и его полный интерфейсный цикл на пользовательском компьютере следует проверить по маршруту ниже. Если workflow не завершился успешно, его `.exe` не публикуются как артефакт.
 

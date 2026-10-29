@@ -7,7 +7,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from scanner.gui import MainWindow
 from scanner.io.format import read_folder
@@ -30,9 +30,10 @@ def test_editor_keeps_all_fields_and_table_rows(reference_folder: Path, tmp_path
     window.close()
 
 
-def test_incomplete_row_survives_save_and_reopen(tmp_path: Path) -> None:
+def test_incomplete_row_survives_save_and_reopen(tmp_path: Path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
-    window = MainWindow(tmp_path / "drafts.sqlite3")
+    database = tmp_path / "drafts.sqlite3"
+    window = MainWindow(database)
     window.draft_id = "unfinished"
     packets = window.tables["packets.csv"].model
     packets.insertRows(0, 1)
@@ -45,6 +46,22 @@ def test_incomplete_row_survives_save_and_reopen(tmp_path: Path) -> None:
     assert tables["packets.csv"][0]["payload_bytes"] == ""
     window.dirty = False
     window.close()
+    window.deleteLater()
+    app.processEvents()
+
+    restarted = MainWindow(database)
+    # Select the actual UI label, including the saved timestamp.
+    monkeypatch.setattr(QInputDialog, "getItem", lambda _parent, _title, _prompt, labels, *_args: (
+        labels[0], True,
+    ))
+    restarted.open_draft()
+    assert restarted.draft_id == "unfinished"
+    assert restarted.tables["packets.csv"].model.rows[0]["tx_time_s"] == "not-yet-a-time"
+    assert restarted.tables["packets.csv"].model.rows[0]["payload_bytes"] == ""
+    assert restarted.pages.currentWidget() is restarted.editor_page
+    restarted.close()
+    restarted.deleteLater()
+    app.processEvents()
 
 
 def test_reimport_opens_saved_revision_or_creates_linked_copy(

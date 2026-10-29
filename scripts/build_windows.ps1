@@ -53,6 +53,8 @@ if (-not $SkipTests) {
 Assert-ExitCode "Сборка CLI"
 & $pythonExe -m PyInstaller --clean --noconfirm "$root\deploy\windows\opd-gui.spec"
 Assert-ExitCode "Сборка GUI"
+& $pythonExe "$root\scripts\verify_windows_bundle.py" "$root\dist\opd-gui.exe"
+Assert-ExitCode "Проверка Qt-плагинов в GUI-пакете"
 
 foreach ($name in @("opd.exe", "opd-gui.exe")) {
     if (-not (Test-Path (Join-Path $root "dist\$name"))) {

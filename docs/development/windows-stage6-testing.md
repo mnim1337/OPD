@@ -30,6 +30,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 Скрипт создаёт `.venv-stage6`, устанавливает текущий checkout и PyInstaller 6.11.1, запускает тесты и собирает `dist\opd.exe` и `dist\opd-gui.exe`.
 
+После сборки скрипт проверяет состав `opd-gui.exe`: внутри должны быть Qt6Core/Gui/Widgets, `platforms/qwindows.dll` для обычного Windows GUI и `platforms/qoffscreen.dll` для автоматического smoke. Если чего-либо нет, сборка завершается ошибкой и пакет нельзя считать готовым. Старый архив `opd-windows-test-0.5.1-wine.zip`, собранный до этой проверки, содержит неисправный GUI и не должен использоваться.
+
 Если нужно только собрать пакет без тестов, используйте `-SkipTests`. Это сокращает проверку и должно быть отражено в протоколе.
 
 ## Smoke-проверка

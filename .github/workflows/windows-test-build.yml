@@ -1,0 +1,50 @@
+name: Windows test build
+
+on:
+  push:
+    branches:
+      - feat/stage-6-delivery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build and test
+        shell: powershell
+        run: .\scripts\build_windows.ps1 -Python python
+      - name: Check packaged applications
+        shell: powershell
+        run: .\scripts\smoke_windows.ps1
+      - name: Record build identity and checksums
+        shell: powershell
+        run: |
+          $lines = @("commit=${{ github.sha }}", "version=$(Get-Content VERSION)", "runner=windows-2022", "python=3.12-x64")
+          foreach ($name in @('opd.exe', 'opd-gui.exe')) {
+            $file = Join-Path dist $name
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            $lines += "$hash  $name"
+          }
+          $lines | Set-Content -Encoding UTF8 dist\BUILD-INFO.txt
+      - name: Upload Windows test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: opd-windows-test-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/opd.exe
+            dist/opd-gui.exe
+            dist/BUILD-INFO.txt
+            configs/examples/profile_demo.json
+            requirements/PAK_export_reference_4files_v1.zip
+            docs/development/windows-stage6-testing.md

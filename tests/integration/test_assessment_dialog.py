@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import copy
+import sqlite3
 import time
 import pytest
 from pathlib import Path
@@ -784,6 +785,36 @@ def test_closing_nonempty_series_shows_saved_count_and_result_access(
                 if button.text() == "Вернуться к экспериментам")
     back.click()
     assert window.pages.currentWidget() is window.experiments_page
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_failed_series_close_does_not_show_success_page(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    database = tmp_path / "failed-series-close.sqlite3"
+    window = MainWindow(database)
+    series_id = window.store.create_series("Серия до сбоя")
+    window.active_series_id = series_id
+    with sqlite3.connect(database) as db:
+        db.execute("""
+            CREATE TRIGGER reject_series_close BEFORE UPDATE OF status ON series
+            BEGIN SELECT RAISE(ABORT, 'simulated series write failure'); END
+        """)
+    errors = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *_args: errors.append(_args[2]))
+    manager = SeriesManagerDialog(window.store, window)
+    manager.series_combo.setCurrentIndex(manager.series_combo.findData(series_id))
+    manager.close_series()
+
+    assert errors and "simulated series write failure" in errors[0]
+    assert window.pages.currentWidget() is not window.series_complete_page
+    assert window.active_series_id == series_id
+    assert window.store.list_series()[0][2] == "open"
+    manager.close()
     window.close()
     window.deleteLater()
     app.processEvents()

@@ -40,6 +40,12 @@ class DraftStore:
                     PRIMARY KEY (draft_id, revision, filename),
                     FOREIGN KEY (draft_id, revision) REFERENCES drafts(draft_id, revision)
                 );
+                CREATE TABLE IF NOT EXISTS draft_copies (
+                    draft_id TEXT PRIMARY KEY,
+                    source_draft_id TEXT NOT NULL,
+                    source_revision INTEGER NOT NULL,
+                    FOREIGN KEY (source_draft_id, source_revision) REFERENCES drafts(draft_id, revision)
+                );
                 CREATE TABLE IF NOT EXISTS profiles (
                     profile_id TEXT NOT NULL,
                     version INTEGER NOT NULL,
@@ -90,13 +96,16 @@ class DraftStore:
         db.execute("PRAGMA foreign_keys = ON")
         return db
 
-    def save(self, draft_id: str, experiment: Experiment, profile: dict[str, Any] | None = None) -> int:
+    def save(self, draft_id: str, experiment: Experiment, profile: dict[str, Any] | None = None,
+             *, copy_of: tuple[str, int] | None = None) -> int:
         return self.save_unvalidated(draft_id, experiment.passport, experiment.table_strings(), profile,
-                                     source=experiment.source, originals=experiment.original_files)
+                                     source=experiment.source, originals=experiment.original_files,
+                                     copy_of=copy_of)
 
     def save_unvalidated(self, draft_id: str, passport_data: dict[str, Any],
                          table_cells: dict[str, list[dict[str, str]]], profile: dict[str, Any] | None = None,
-                         *, source: str = "manual", originals: dict[str, bytes] | None = None) -> int:
+                         *, source: str = "manual", originals: dict[str, bytes] | None = None,
+                         copy_of: tuple[str, int] | None = None) -> int:
         """Preserve even incomplete or mistyped cells so a draft can be repaired later."""
         if not draft_id or "/" in draft_id or "\\" in draft_id:
             raise ValueError("Нужен непустой идентификатор черновика без разделителей пути")
@@ -110,6 +119,11 @@ class DraftStore:
                 draft_id, revision, datetime.now(timezone.utc).isoformat(), source,
                 passport, tables, profile_text,
             ))
+            if copy_of is not None:
+                if revision != 1:
+                    raise ValueError("Связь копии задаётся только для нового черновика")
+                db.execute("INSERT INTO draft_copies VALUES (?, ?, ?)",
+                           (draft_id, copy_of[0], copy_of[1]))
             for name, data in (originals or {}).items():
                 db.execute("INSERT INTO originals VALUES (?, ?, ?, ?)", (draft_id, revision, name, data))
             if profile and profile.get("profile_id"):
@@ -151,6 +165,36 @@ class DraftStore:
                 ON d.draft_id = latest.draft_id AND d.revision = latest.revision
                 ORDER BY d.created_utc DESC
             """).fetchall()
+
+    def matching_import(self, experiment: Experiment) -> tuple[str, int] | None:
+        """Find a stored version with the same experiment ID and all four original files."""
+        originals = experiment.original_files
+        if set(originals) != {"experiment.json", "packets.csv", "routes.csv", "channels.csv"}:
+            return None
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT d.draft_id, d.revision
+                FROM drafts d LEFT JOIN draft_copies c ON c.draft_id = d.draft_id
+                WHERE c.draft_id IS NULL AND d.source IN ('import', 'edited_import')
+                ORDER BY d.created_utc DESC, d.revision DESC
+            """).fetchall()
+            for draft_id, revision in rows:
+                stored = dict(db.execute(
+                    "SELECT filename, content FROM originals WHERE draft_id = ? AND revision = ?",
+                    (draft_id, revision),
+                ))
+                if stored == originals and json.loads(stored["experiment.json"]).get(
+                    "experiment_id"
+                ) == experiment.experiment_id:
+                    return draft_id, revision
+        return None
+
+    def copy_origin(self, draft_id: str) -> tuple[str, int] | None:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT source_draft_id, source_revision FROM draft_copies WHERE draft_id = ?",
+                (draft_id,),
+            ).fetchone()
 
     def profile_version(self, draft_id: str, revision: int) -> tuple[str, int] | None:
         with self._connect() as db:
@@ -244,6 +288,12 @@ class DraftStore:
             # Older valid OPD backups may not yet contain series tables.
             with self._connect() as db:
                 db.executescript("""
+                    CREATE TABLE IF NOT EXISTS draft_copies (
+                        draft_id TEXT PRIMARY KEY,
+                        source_draft_id TEXT NOT NULL,
+                        source_revision INTEGER NOT NULL,
+                        FOREIGN KEY (source_draft_id, source_revision) REFERENCES drafts(draft_id, revision)
+                    );
                     CREATE TABLE IF NOT EXISTS series (
                         series_id TEXT PRIMARY KEY,
                         title TEXT NOT NULL,

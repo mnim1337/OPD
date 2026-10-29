@@ -9,6 +9,7 @@ import json
 import math
 import sqlite3
 import sys
+import uuid
 from threading import Event
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
@@ -3619,6 +3620,44 @@ class MainWindow(QMainWindow):
         experiment = self.pending_import
         if experiment is None:
             self.show_input_choices()
+            return
+        try:
+            existing = self.store.matching_import(experiment)
+            if existing is not None:
+                draft_id, revision = existing
+                choice = QMessageBox.question(
+                    self, "Комплект уже сохранён",
+                    f"Комплект {experiment.experiment_id} совпадает с записью {draft_id}, версия {revision}.\n\n"
+                    "Да — открыть сохранённую версию с её профилем Ω.\n"
+                    "Нет — создать и сохранить отдельную копию, связанную с ней.\n"
+                    "Отмена — остаться на предпросмотре.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No |
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if choice == QMessageBox.StandardButton.Cancel:
+                    return
+                if choice == QMessageBox.StandardButton.Yes:
+                    saved, profile, _ = self.store.load(draft_id, revision)
+                    self.draft_id = draft_id
+                    self._set_experiment(saved, profile)
+                    self.pending_import = None
+                    self.show_editor()
+                    self.statusBar().showMessage(f"Открыт сохранённый комплект {draft_id}, версия {revision}")
+                    return
+                if choice == QMessageBox.StandardButton.No:
+                    copy_id = f"{experiment.experiment_id}-copy-{uuid.uuid4().hex}"
+                    self.store.save(copy_id, experiment, copy_of=existing)
+                    self.draft_id = copy_id
+                    self._set_experiment(experiment)
+                    self.pending_import = None
+                    self.show_editor()
+                    self.statusBar().showMessage(
+                        f"Копия {copy_id} сохранена; исходная запись {draft_id}, версия {revision}"
+                    )
+                    return
+                return
+        except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            self._error(exc)
             return
         self.pending_import = None
         self.draft_id = None

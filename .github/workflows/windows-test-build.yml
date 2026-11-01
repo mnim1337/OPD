@@ -5,6 +5,7 @@ on:
     branches:
       - feat/stage-6-delivery
       - feat/manual-input-result-verification
+      - fix/title-page-spec
   workflow_dispatch:
 
 permissions:

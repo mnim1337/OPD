@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, Qt, Signal, QThread
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPalette, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPalette, QPen, QPolygonF, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QScrollArea, QSizePolicy,
@@ -147,43 +147,96 @@ class NetworkMark(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setMinimumSize(260, 210)
-        self.setMaximumHeight(380)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
         width, height = self.width(), self.height()
-        center = QPointF(width * .52, height * .52)
-        radius = min(width * .35, height * .42)
-        glow = QRadialGradient(center, radius * 1.15)
-        glow.setColorAt(0, QColor(45, 112, 170, 125))
-        glow.setColorAt(.55, QColor(30, 81, 130, 45))
-        glow.setColorAt(1, QColor(20, 50, 81, 0))
+        center = QPointF(width * .50, height * .52)
+        radius = min(width * .36, height * .34)
+        glow = QRadialGradient(center, radius * 1.25)
+        glow.setColorAt(0, QColor(68, 129, 184, 125))
+        glow.setColorAt(.7, QColor(40, 93, 145, 65))
+        glow.setColorAt(1, QColor(25, 65, 104, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(glow)
-        painter.drawEllipse(center, radius * 1.15, radius * 1.15)
+        painter.drawEllipse(center, radius * 1.25, radius * 1.25)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(135, 183, 218, 105), 1.4))
-        for angle in (0, 35, 70, 110, 145):
+        painter.setPen(QPen(QColor(137, 190, 231, 160), 1.7))
+        for angle in (0, 42, 86, 132):
             painter.save()
             painter.translate(center)
             painter.rotate(angle)
-            painter.drawEllipse(QRectF(-radius, -radius * .47, radius * 2, radius * .94))
+            painter.drawEllipse(QRectF(-radius * 1.35, -radius * .61, radius * 2.70, radius * 1.22))
             painter.restore()
-        painter.setPen(QPen(QColor(93, 153, 197, 90), 1))
-        painter.drawEllipse(center, radius * .68, radius * .68)
-        for dx, dy in ((-.8, -.42), (.84, -.3), (-.63, .63), (.6, .62)):
+        painter.setPen(QPen(QColor(117, 174, 215, 105), 1.1))
+        painter.drawEllipse(center, radius * .90, radius * .90)
+        for scale in (.28, .55, .78):
+            painter.drawEllipse(QRectF(center.x() - radius * .90, center.y() - radius * scale,
+                                       radius * 1.80, radius * scale * 2))
+        for dx, dy in ((-.98, -.34), (.22, -.92), (1.04, -.33), (.94, .74), (-.88, .82)):
             x, y = center.x() + radius * dx, center.y() + radius * dy
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#3680b8"))
-            painter.drawRoundedRect(QRectF(x - 9, y - 6, 18, 12), 2, 2)
-            painter.setBrush(QColor("#a8d0ed"))
-            painter.drawRect(QRectF(x - 24, y - 5, 12, 10))
-            painter.drawRect(QRectF(x + 12, y - 5, 12, 10))
-            painter.setPen(QPen(QColor("#153251"), 1))
-            painter.drawLine(QPointF(x - 11, y), QPointF(x - 9, y))
-            painter.drawLine(QPointF(x + 9, y), QPointF(x + 11, y))
+            cell = max(8.0, radius * .115)
+            painter.setBrush(QColor("#4c8fca"))
+            painter.drawRoundedRect(QRectF(x - cell * 1.65, y - cell * .38, cell, cell * .76), 2, 2)
+            painter.setBrush(QColor("#d9ecfc"))
+            painter.drawRoundedRect(QRectF(x - cell * .47, y - cell * .45, cell * .94, cell * .90), 2, 2)
+            painter.setBrush(QColor("#4c8fca"))
+            painter.drawRoundedRect(QRectF(x + cell * .65, y - cell * .38, cell, cell * .76), 2, 2)
+        painter.end()
+
+
+class TitlePage(QWidget):
+    """Scaled opening composition following appendix V, figure В.3."""
+
+    def __init__(self, on_start: Any, mark: QWidget | None = None):
+        super().__init__()
+        self.setObjectName("startPage")
+        self.eyebrow = QLabel("НАСТОЛЬНАЯ ПРОГРАММА", self)
+        self.eyebrow.setObjectName("heroEyebrow")
+        self.heading = QLabel("ОЦЕНКА\nМАРШРУТИЗАЦИИ", self)
+        self.heading.setObjectName("heroTitle")
+        self.description = QLabel(
+            "Комплексная оценка эффективности\nалгоритмов маршрутизации\n"
+            "в многоспутниковых системах связи", self,
+        )
+        self.description.setObjectName("heroSubtitle")
+        self.start_button = QPushButton("Начать", self)
+        self.start_button.setProperty("variant", "primary")
+        self.start_button.clicked.connect(on_start)
+        self.mark = mark or NetworkMark()
+        self.mark.setParent(self)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        width, height = self.width(), self.height()
+        scale = max(.68, min(width / 1300, height / 825, 1.55))
+        left = round(width * .065)
+        self.eyebrow.setGeometry(left, round(height * .08), round(width * .46), round(24 * scale))
+        self.heading.setGeometry(left, round(height * .235), round(width * .48), round(136 * scale))
+        self.description.setGeometry(left, round(height * .455), round(width * .44), round(88 * scale))
+        self.start_button.setGeometry(left, round(height * .635), round(width * .225), round(58 * scale))
+        self.mark.setGeometry(round(width * .51), round(height * .11), round(width * .45), round(height * .64))
+        self.heading.setStyleSheet(f"font-size: {round(53 * scale)}px;")
+        self.description.setStyleSheet(f"font-size: {round(19 * scale)}px;")
+        self.eyebrow.setStyleSheet(f"font-size: {round(13 * scale)}px;")
+        self.start_button.setStyleSheet(f"font-size: {round(17 * scale)}px;")
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        gradient = QLinearGradient(0, 0, self.width(), self.height())
+        gradient.setColorAt(0, QColor("#10243d"))
+        gradient.setColorAt(1, QColor("#25557d"))
+        painter.fillRect(self.rect(), gradient)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(153, 197, 232, 130))
+        for index in range(62):
+            x = (index * 173 + 91) % 1807 / 1807 * self.width()
+            y = (index * 311 + 43) % 1129 / 1129 * self.height()
+            size = 1.1 if index % 5 else 1.7
+            painter.drawEllipse(QPointF(x, y), size, size)
         painter.end()
 
 
@@ -3841,7 +3894,11 @@ class MainWindow(QMainWindow):
         editor_footer.setLayout(editor_actions)
         layout.addWidget(editor_footer)
         self.statusBar().showMessage("Новый черновик. Пустые наблюдения не создаются автоматически.")
+        self.pages.currentChanged.connect(
+            lambda _: self.statusBar().setVisible(self.pages.currentWidget() is not self.start_page)
+        )
         self.pages.setCurrentWidget(self.start_page)
+        self.statusBar().hide()
 
     def _update_editor_heading(self, _index: int = 0) -> None:
         section = self.passport.tabs.currentIndex()
@@ -3881,8 +3938,10 @@ class MainWindow(QMainWindow):
     def _navigation_page(self, title: str, subtitle: str,
                          buttons: tuple[tuple[str, Any], ...],
                          extra_widget: QWidget | None = None) -> QWidget:
+        if title == "OPD":
+            return TitlePage(buttons[0][1], extra_widget)
         page = QWidget()
-        page.setObjectName("startPage" if title == "OPD" else "workspacePage")
+        page.setObjectName("workspacePage")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -3894,33 +3953,6 @@ class MainWindow(QMainWindow):
                 button.setProperty("variant", "primary")
             button.clicked.connect(callback)
             return button
-
-        if title == "OPD":
-            hero = QHBoxLayout()
-            hero.setContentsMargins(64, 55, 64, 55)
-            copy = QVBoxLayout()
-            copy.addStretch()
-            eyebrow = QLabel("НАСТОЛЬНАЯ ПРОГРАММА")
-            eyebrow.setObjectName("heroEyebrow")
-            copy.addWidget(eyebrow)
-            heading = QLabel("ОЦЕНКА\nМАРШРУТИЗАЦИИ")
-            heading.setObjectName("heroTitle")
-            copy.addWidget(heading)
-            description = QLabel("Комплексная оценка эффективности алгоритмов маршрутизации\n"
-                                 "в многоспутниковых системах связи")
-            description.setObjectName("heroSubtitle")
-            description.setWordWrap(True)
-            copy.addWidget(description)
-            copy.addSpacing(35)
-            start = action(*buttons[0], primary=True)
-            start.setMinimumWidth(250)
-            copy.addWidget(start, alignment=Qt.AlignmentFlag.AlignLeft)
-            copy.addStretch()
-            hero.addLayout(copy, 3)
-            if extra_widget is not None:
-                hero.addWidget(extra_widget, 2)
-            layout.addLayout(hero, 1)
-            return page
 
         codes = {"Главное меню": "П02", "Эксперименты": "П03", "Новый опыт": "П04",
                  "Состав импортированного комплекта": "П04а", "Результаты и черновики": "П07",

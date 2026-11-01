@@ -499,6 +499,12 @@ def test_main_window_navigation_keeps_all_stages_in_one_window(tmp_path: Path, m
     assert window.pages.currentWidget() is window.start_page
     mark = window.findChild(NetworkMark)
     assert mark is not None and mark.grab().width() >= 220
+    title = next(label for label in window.start_page.findChildren(QLabel) if label.text() == "ОЦЕНКА\nМАРШРУТИЗАЦИИ")
+    start = next(button for button in window.start_page.findChildren(QPushButton) if button.text() == "Начать")
+    assert title.y() < window.start_page.height() * .30
+    assert start.y() > title.geometry().bottom()
+    assert mark.width() > window.start_page.width() * .40
+    assert not window.statusBar().isVisible()
     assert window.findChildren(QPushButton)
     assert {button.text() for button in window.main_menu_page.findChildren(QPushButton)} == {
         "Эксперименты", "Справка", "О программе", "Выход", "К титульной панели",

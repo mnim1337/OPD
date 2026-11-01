@@ -243,6 +243,29 @@ def test_timeline_marks_unrecorded_model_time(reference_folder: Path) -> None:
     app.processEvents()
 
 
+def test_timeline_preserves_physical_path_states_across_one_installed_route(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    chart = TimelineChart(read_folder(reference_folder))
+    chart.resize(1100, max(chart.minimumHeight(), 320))
+    chart.show()
+    app.processEvents()
+    picture = chart.grab().toImage()
+    start, end = chart.time_window
+    right = max(176, chart.width() - 28)
+
+    def route_color(moment: float) -> QColor:
+        x = round(175 + (right - 175) * (moment - start) / (end - start))
+        return picture.pixelColor(x, 87)
+
+    assert route_color(1.7) == QColor("#2D62C6")  # first path works
+    assert route_color(5.1) == QColor("#AE7919")  # same installed path is broken
+    assert route_color(5.35) == QColor("#B33B50")  # no route is recorded
+    assert route_color(6.5) == QColor("#14847C")  # alternate path works
+    chart.close()
+    chart.deleteLater()
+    app.processEvents()
+
+
 def test_comparison_view_explains_incomparable_conditions_without_ranking() -> None:
     app = QApplication.instance() or QApplication([])
     metrics = {
@@ -749,7 +772,7 @@ def test_table_editor_supports_add_copy_paste_and_delete() -> None:
     app = QApplication.instance() or QApplication([])
     editor = TableEditor("packets.csv")
     assert {button.text() for button in editor.findChildren(QPushButton)} == {
-        "Добавить строку", "Удалить строки", "Копировать", "Вставить диапазон",
+        "Добавить строку", "Копировать запись", "Удалить строки", "Копировать", "Вставить диапазон",
     }
     assert editor.model.insertRows(0, 2)
     editor.model.setData(editor.model.index(0, 1), "FLOW-1")
@@ -769,6 +792,25 @@ def test_table_editor_supports_add_copy_paste_and_delete() -> None:
     editor.view.selectRow(1)
     editor.delete_rows()
     assert editor.model.rowCount() == 1
+    editor.close()
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_table_editor_duplicates_all_record_fields_without_overwriting_source(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = read_folder(reference_folder).table_strings()["packets.csv"][0]
+    editor = TableEditor("packets.csv")
+    editor.model.set_rows([source])
+    editor.view.setCurrentIndex(editor.model.index(0, editor.model.header.index("packet_id")))
+    editor.duplicate_row()
+    assert editor.model.rowCount() == 2
+    assert editor.model.rows[1] == source
+    assert editor.view.currentIndex().row() == 1
+    editor.model.setData(editor.model.index(1, editor.model.header.index("packet_id")), "NEW_PACKET")
+    assert editor.model.rows[0] == source
+    assert editor.model.rows[1]["packet_id"] == "NEW_PACKET"
+    assert editor.model.rows[1]["drop_reason"] == source["drop_reason"]
     editor.close()
     editor.deleteLater()
     app.processEvents()

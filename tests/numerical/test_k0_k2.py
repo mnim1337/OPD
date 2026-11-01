@@ -102,6 +102,19 @@ def test_reference_hand_counts_and_late_reception(controls, tmp_path: Path) -> N
     assert reference.metrics["P_ad"].raw.exact_value == D("0.5")
 
 
+def test_adaptivity_uses_actual_event_not_scheduled_time(controls) -> None:
+    experiments, profile = controls
+    original = experiments[0][0]
+    changed = copy.deepcopy(original)
+    event = changed.passport["scenario"]["events"][0]
+    assert event["actual_time_s"] != event["scheduled_time_s"]
+    event["scheduled_time_s"] = event["scheduled_time_s"] - 0.1
+    result = calculate(changed, profile)
+    baseline = calculate(original, profile)
+    assert result.metrics["P_ad"].raw == baseline.metrics["P_ad"].raw
+    assert result.metrics["P_ad"].trace == baseline.metrics["P_ad"].trace
+
+
 def test_censored_adaptivity_has_open_lower_bound_but_saturated_score(controls) -> None:
     experiments, profile = controls
     result = calculate(experiments[4][0], profile)

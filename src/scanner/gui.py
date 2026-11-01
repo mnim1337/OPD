@@ -642,12 +642,6 @@ class TimelineChart(QWidget):
                             painter.setPen(QPen(QColor("#FFFFFF"), .6))
                             painter.setBrush(QBrush(QColor("#E4C95C"), Qt.BrushStyle.BDiagPattern))
                             painter.drawRect(QRectF(x, y + 5, w, lane_h - 10))
-                        if w >= 120:
-                            painter.setPen(QPen(QColor("#FFFFFF"), 1))
-                            painter.drawText(QRectF(x, y + 5, w, lane_h - 10),
-                                             Qt.AlignmentFlag.AlignCenter,
-                                             "Первый путь" if segment.get("path_id") == first_paths.get(name)
-                                             else "Другой путь")
                         continue
                     color = state_colors.get(state, QColor("#E4C95C"))
                     unknown = state not in state_colors
@@ -3277,8 +3271,9 @@ class TableEditor(QWidget):
             self.view.setColumnWidth(self.model.header.index(key), width)
         layout = QVBoxLayout(self)
         buttons = QHBoxLayout()
-        for label, callback in (("Добавить строку", self.add_row), ("Удалить строки", self.delete_rows),
-                                ("Копировать", self.copy), ("Вставить диапазон", self.paste)):
+        for label, callback in (("Добавить строку", self.add_row), ("Копировать запись", self.duplicate_row),
+                                ("Удалить строки", self.delete_rows), ("Копировать", self.copy),
+                                ("Вставить диапазон", self.paste)):
             button = QPushButton(label)
             button.clicked.connect(callback)
             buttons.addWidget(button)
@@ -3430,6 +3425,18 @@ class TableEditor(QWidget):
         row = selected.row() + 1 if selected.isValid() else self.model.rowCount()
         self.model.insertRows(row, 1)
         self.view.setCurrentIndex(self.model.index(row, 1))
+
+    def duplicate_row(self) -> None:
+        selected = self.view.currentIndex()
+        if not selected.isValid() or self.view.isRowHidden(selected.row()):
+            return
+        source = dict(self.model.rows[selected.row()])
+        row = selected.row() + 1
+        self.model.insertRows(row, 1)
+        self.model.rows[row].update(source)
+        self.model.dataChanged.emit(self.model.index(row, 0),
+                                    self.model.index(row, self.model.columnCount() - 1))
+        self.view.setCurrentIndex(self.model.index(row, selected.column()))
 
     def delete_rows(self) -> None:
         rows = sorted({idx.row() for idx in self.view.selectedIndexes()}, reverse=True)

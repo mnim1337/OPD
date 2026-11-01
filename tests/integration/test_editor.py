@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -9,8 +10,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
+from scanner.core import calculate
 from scanner.gui import MainWindow
-from scanner.io.format import read_folder
+from scanner.io.format import export_four, read_folder
+from scanner.io.validation import validate_experiment
 
 
 def test_editor_keeps_all_fields_and_table_rows(reference_folder: Path, tmp_path: Path) -> None:
@@ -28,6 +31,63 @@ def test_editor_keeps_all_fields_and_table_rows(reference_folder: Path, tmp_path
     assert edited.source == "edited_import"
     window.dirty = False
     window.close()
+
+
+def test_manual_forms_match_import_after_export_and_calculation(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    imported = read_folder(reference_folder)
+    profile = json.loads((Path(__file__).resolve().parents[2] /
+                          "configs/examples/profile_demo.json").read_text(encoding="utf-8"))
+    window = MainWindow(tmp_path / "manual.sqlite3")
+    window.passport.set_value(deepcopy(imported.passport))
+    window.profile.set_value(deepcopy(profile))
+    source_rows = imported.table_strings()
+    for name, editor in window.tables.items():
+        editor.model.set_rows(source_rows[name])
+    window.tables["packets.csv"].model.rows[0]["experiment_id"] = "STALE"
+    manual, selected_profile = window._experiment()
+    assert manual.source == "manual"
+    assert manual.passport == imported.passport
+    assert manual.tables == imported.tables
+    assert any(row["rx_time_s"] is None for row in manual.tables["packets.csv"])
+    assert all(row["queue_mean_bytes"] is None for row in manual.tables["channels.csv"])
+    assert selected_profile == profile
+    assert not [item for item in validate_experiment(manual, complete=True)
+                if item.severity == "error"]
+
+    manual_result = calculate(manual, selected_profile)
+    imported_result = calculate(imported, profile)
+    assert manual_result.metrics == imported_result.metrics
+    assert manual_result.groups == imported_result.groups
+    assert manual_result.integral == imported_result.integral
+
+    reidentified = deepcopy(manual)
+    reidentified.passport["experiment_id"] = "MANUAL_OTHER"
+    for rows in reidentified.tables.values():
+        for row in rows:
+            row["experiment_id"] = "MANUAL_OTHER"
+    assert calculate(reidentified, profile).metrics == imported_result.metrics
+
+    exported_folder = tmp_path / "manual-export"
+    export_four(manual, exported_folder)
+    reimported = read_folder(exported_folder)
+    export_status = reimported.passport["export_status"]["tables"]
+    for name, rows in manual.tables.items():
+        data = (exported_folder / name).read_bytes()
+        assert export_status[name] == {
+            "row_count": len(rows), "size_bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    assert reimported.tables == imported.tables
+    reimported_result = calculate(reimported, profile)
+    assert reimported_result.metrics == imported_result.metrics
+    assert reimported_result.integral == imported_result.integral
+    window.dirty = False
+    window.close()
+    window.deleteLater()
+    app.processEvents()
 
 
 def test_incomplete_row_survives_save_and_reopen(tmp_path: Path, monkeypatch) -> None:

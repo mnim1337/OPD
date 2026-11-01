@@ -145,6 +145,28 @@ def test_multipath_record_does_not_invent_single_path_stability(controls) -> Non
     experiments, profile = controls
     experiment = copy.deepcopy(experiments[0][0])
     experiment.passport["algorithm"]["routing_mode"] = "multipath_per_flow"
+    alternatives = {
+        "F01": [
+            ["L_G01_S01", "L_S01_S02", "L_S02_S04", "L_S04_G02"],
+            ["L_G01_S01", "L_S01_S03", "L_S03_S04", "L_S04_G02"],
+        ],
+        "F02": [
+            ["L_G02_S04", "L_S04_S02", "L_S02_S01", "L_S01_G01"],
+            ["L_G02_S04", "L_S04_S03", "L_S03_S01", "L_S01_G01"],
+        ],
+    }
+    multipath_rows = []
+    for row in experiment.tables["routes.csv"]:
+        multipath_rows.append(row)
+        if row["route_state"] != "installed":
+            continue
+        alternative = next(path for path in alternatives[row["flow_id"]] if path != row["path_links"])
+        row["selection_share"] = D("0.5")
+        second = copy.deepcopy(row)
+        second["path_links"] = alternative
+        second["path_id"] = f"ALT_{row['flow_id']}_{'S02' if 'L_S01_S02' in alternative or 'L_S04_S02' in alternative else 'S03'}"
+        multipath_rows.append(second)
+    experiment.tables["routes.csv"] = multipath_rows
     result = calculate(experiment, profile)
     assert result.metrics["P_ust"].raw.status == "not_applicable"
     assert result.metrics["P_ad"].raw.status == "not_applicable"

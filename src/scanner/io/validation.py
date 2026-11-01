@@ -8,7 +8,7 @@ from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from .model import Diagnostic, Experiment, HEADERS
+from .model import Diagnostic, Experiment, HEADERS, file_contract
 
 IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
 STATES = {"complete", "partial", "unknown"}
@@ -122,11 +122,10 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
     c.check(meas.get("channel_counter_mode") == "interval_delta", "FORMAT_COUNTER", "measurement", "channel_counter_mode", "ожидаются приращения")
     c.check(meas.get("channel_categories_disjoint") is True, "FORMAT_COUNTER", "measurement", "channel_categories_disjoint", "категории должны быть непересекающимися")
 
-    fc = c.required(m.get("file_contract"), ("table_headers",), "file_contract")
-    for key, value in {"encoding": "UTF-8", "bom": False, "csv_delimiter": ",", "decimal_separator": ".", "csv_quotechar": '"', "csv_line_ending": "CRLF", "csv_null": "empty_field"}.items():
-        c.check(fc.get(key) == value, "FORMAT_CONTRACT", "file_contract", key, f"ожидается {value!r}")
-    c.check(fc.get("table_headers") == {name: list(header) for name, header in HEADERS.items()},
-            "FORMAT_HEADER", "file_contract", "table_headers", "заголовки не соответствуют схеме")
+    fc = c.required(m.get("file_contract"), tuple(file_contract()), "file_contract")
+    for key, value in file_contract().items():
+        c.check(fc.get(key) == value, "FORMAT_HEADER" if key == "table_headers" else "FORMAT_CONTRACT",
+                "file_contract", key, f"ожидается {value!r}")
 
     network = c.required(m.get("network"), ("network_id", "directed", "nodes", "links"), "network")
     c.check(network.get("directed") is True, "TYPE_BOOL", "network", "directed", "сеть должна быть направленной")
@@ -193,7 +192,12 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
         if refs is not None:
             c.check(isinstance(obj.get("object_ids"), list) and all(isinstance(x, str) and x in refs for x in obj["object_ids"]),
                     "REFERENCE_EVENT", place, "object_ids", "неизвестный объект события")
-        c.check(isinstance(obj.get("changes"), dict), "TYPE_OBJECT", place, "changes", "ожидается объект изменений")
+        changes = obj.get("changes")
+        if c.check(isinstance(changes, dict), "TYPE_OBJECT", place, "changes", "ожидается объект изменений"):
+            if "link_up" in changes:
+                c.check(isinstance(changes["link_up"], bool), "TYPE_BOOL", place, "changes.link_up", "ожидается JSON boolean")
+            if "capacity_bps" in changes:
+                c.number(changes["capacity_bps"], place, "changes.capacity_bps", D(0))
 
     status = c.required(m.get("export_status"), ("complete", "data_logging_complete", "lost_log_records", "logging_gaps", "tables"), "export_status")
     c.check(isinstance(status.get("data_logging_complete"), bool), "TYPE_BOOL", "export_status", "data_logging_complete", "ожидается JSON boolean")
@@ -320,7 +324,7 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
             "REFERENCE_BALANCE", "measurement.balance", "selected_link_ids", "неверный набор каналов")
 
     by_flow: dict[str, list[tuple[Decimal, Decimal, str]]] = defaultdict(list)
-    groups: dict[str, dict[tuple[Decimal, Decimal, str], list[dict]]] = defaultdict(lambda: defaultdict(list))
+    groups: dict[str, dict[tuple[Decimal, Decimal, str], list[tuple[dict, str]]]] = defaultdict(lambda: defaultdict(list))
     path_ids: dict[tuple[str, str], tuple[str, ...]] = {}
     for index, row in enumerate(experiment.tables.get("routes.csv", []), 2):
         place = f"routes.csv:{index}"
@@ -332,7 +336,7 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
         if None not in (a, b):
             c.check(a < b <= ce, "TIME_ROUTE", place, "time_end_s", "неверный интервал")
             by_flow[fid].append((a, b, place))
-            groups[fid][(a, b, str(row.get("route_set_id")))].append(row)
+            groups[fid][(a, b, str(row.get("route_set_id")))].append((row, place))
         state = row.get("route_state")
         c.check(state in ROUTE_STATES, "TYPE_ROUTE", place, "route_state", "неизвестное состояние")
         path = row.get("path_links")
@@ -375,21 +379,24 @@ def validate_experiment(experiment: Experiment, *, originals: dict[str, bytes] |
         if algorithm.get("routing_mode") == "single_path_per_flow":
             _coverage(c, by_flow.get(fid, []), cs, ce, f"routes.csv:{fid}")
             for group in groups[fid].values():
-                for row in group:
+                for row, place in group:
                     if row.get("route_state") in {"installed", "loop"}:
-                        c.check(row.get("selection_share") == 1, "RANGE_SHARE", "routes.csv", "selection_share", "для одного пути доля должна быть 1")
+                        c.check(row.get("selection_share") == 1, "RANGE_SHARE", place, "selection_share", "для одного пути доля должна быть 1")
         else:
             representatives = [(a, b, f"routes.csv:{fid}") for a, b, _ in groups[fid]]
             _coverage(c, representatives, cs, ce, f"routes.csv:{fid}")
             for group in groups[fid].values():
-                if any(row.get("route_state") in {"no_route", "unknown"} for row in group):
-                    c.check(len(group) == 1, "STATE_ROUTE", "routes.csv", "route_set_id", "отсутствие пути нельзя смешивать с путями")
+                rows = [row for row, _ in group]
+                place = group[0][1]
+                if any(row.get("route_state") in {"no_route", "unknown"} for row in rows):
+                    c.check(len(group) == 1, "STATE_ROUTE", place, "route_set_id", "отсутствие пути нельзя смешивать с путями")
                 else:
-                    shares = [row.get("selection_share") for row in group]
-                    if all(share is not None for share in shares):
-                        c.check(abs(sum(shares, D(0)) - 1) <= D("0.000000001"), "RANGE_SHARE", "routes.csv", "selection_share", "сумма долей не равна 1")
-                    else:
-                        c.warn("INCOMPLETE_SHARE", "routes.csv", "selection_share", "доли путей не полностью известны")
+                    c.check(len(group) > 1, "STATE_ROUTE", place, "route_set_id", "многопутевому набору нужны несколько путей")
+                    path_names = [row.get("path_id") for row in rows]
+                    c.check(len(path_names) == len(set(path_names)), "REFERENCE_DUP", place, "path_id", "повтор пути в наборе")
+                    shares = [row.get("selection_share") for row in rows]
+                    if c.check(all(share is not None for share in shares), "FIELD_REQUIRED", place, "selection_share", "доли путей должны быть известны"):
+                        c.check(abs(sum(shares, D(0)) - 1) <= D("0.000000001"), "RANGE_SHARE", place, "selection_share", "сумма долей не равна 1")
 
     stability = c.required(meas.get("stability"), ("checks",), "measurement.stability")
     for index, check in enumerate(stability.get("checks", []) if isinstance(stability.get("checks"), list) else [], 1):

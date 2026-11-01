@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import copy
 import hashlib
 import io
 import json
@@ -189,3 +190,98 @@ def test_export_refuses_incomplete_experiment(reference_folder: Path, tmp_path: 
     with pytest.raises(DataError, match="TIME_COVERAGE"):
         export_four(imported, destination)
     assert not destination.exists()
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("json_line_ending", "CRLF"),
+    ("csv_boolean_values", ["true", "false"]),
+    ("identifier_pattern", "anything"),
+])
+def test_file_contract_is_checked_for_import_and_manual_input(reference_folder: Path, field: str, value: object) -> None:
+    imported = read_folder(reference_folder)
+    passport = copy.deepcopy(imported.passport)
+    passport["file_contract"][field] = value
+    manual = from_manual(passport, imported.table_strings())
+    manual_errors = [item for item in validate_experiment(manual, complete=False) if item.severity == "error"]
+    assert any(item.code == "FORMAT_CONTRACT" and item.location == "file_contract" and item.field == field for item in manual_errors)
+
+    path = reference_folder / "experiment.json"
+    path.write_text(json.dumps(passport, ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(DataError) as caught:
+        read_folder(reference_folder)
+    assert caught.value.diagnostic.code == "FORMAT_CONTRACT"
+    assert caught.value.diagnostic.location == "file_contract"
+    assert caught.value.diagnostic.field == field
+
+
+@pytest.mark.parametrize(("mutation", "code", "field"), [
+    ("duplicate_path", "REFERENCE_DUP", "path_id"),
+    ("unknown_share", "FIELD_REQUIRED", "selection_share"),
+])
+def test_multipath_set_rejects_invalid_rows_for_both_inputs(
+    reference_folder: Path, mutation: str, code: str, field: str,
+) -> None:
+    imported = read_folder(reference_folder)
+    passport = copy.deepcopy(imported.passport)
+    passport["algorithm"]["routing_mode"] = "multipath_per_flow"
+    rows = imported.table_strings()
+    first = rows["routes.csv"][0]
+    assert first["route_state"] == "installed"
+    first["selection_share"] = "0.5"
+    second = dict(first)
+    if mutation == "duplicate_path":
+        second["selection_share"] = "0.5"
+    else:
+        second["path_id"] = "OTHER_PATH"
+        second["selection_share"] = ""
+    rows["routes.csv"].insert(1, second)
+    manual = from_manual(passport, rows)
+    errors = [item for item in validate_experiment(manual, complete=False) if item.severity == "error"]
+    assert any(item.code == code and item.field == field and item.location.startswith("routes.csv:") for item in errors)
+
+    route_path = reference_folder / "routes.csv"
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=HEADERS["routes.csv"], lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(rows["routes.csv"])
+    raw = output.getvalue().encode("utf-8")
+    route_path.write_bytes(raw)
+    passport["export_status"]["tables"]["routes.csv"].update({
+        "row_count": len(rows["routes.csv"]), "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+    })
+    (reference_folder / "experiment.json").write_text(json.dumps(passport, ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(DataError) as caught:
+        read_folder(reference_folder)
+    assert caught.value.diagnostic.code == code
+    assert caught.value.diagnostic.field == field
+    assert caught.value.diagnostic.location.startswith("routes.csv:")
+
+
+def test_impossible_packet_time_is_rejected_but_recorded_loop_is_valid(reference_folder: Path) -> None:
+    imported = read_folder(reference_folder)
+    packet = imported.tables["packets.csv"][0]
+    packet["observed_until_s"] = packet["tx_time_s"] - 1
+    errors = [item for item in validate_experiment(imported, complete=False) if item.severity == "error"]
+    assert any(item.code == "TIME_PACKET" and item.location == "packets.csv:2" and item.field == "observed_until_s" for item in errors)
+
+    imported = read_folder(reference_folder)
+    route = imported.tables["routes.csv"][0]
+    route["route_state"] = "loop"
+    route["path_id"] = "LOOP_PATH"
+    route["path_links"] = ["L_G01_S01", "L_S01_S02", "L_S02_S01"]
+    assert not [item for item in validate_experiment(imported, complete=False) if item.severity == "error"]
+
+
+def test_invalid_event_change_has_diagnostic_for_both_inputs(reference_folder: Path) -> None:
+    imported = read_folder(reference_folder)
+    passport = copy.deepcopy(imported.passport)
+    passport["scenario"]["events"][0]["changes"]["capacity_bps"] = "invalid"
+    manual = from_manual(passport, imported.table_strings())
+    errors = [item for item in validate_experiment(manual, complete=False) if item.severity == "error"]
+    assert any(item.code == "TYPE_NUMBER" and item.location == "scenario.events[1]" and item.field == "changes.capacity_bps" for item in errors)
+    (reference_folder / "experiment.json").write_text(json.dumps(passport, ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(DataError) as caught:
+        read_folder(reference_folder)
+    assert caught.value.diagnostic.code == "TYPE_NUMBER"
+    assert caught.value.diagnostic.location == "scenario.events[1]"
+    assert caught.value.diagnostic.field == "changes.capacity_bps"

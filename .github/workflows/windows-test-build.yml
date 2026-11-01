@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/stage-6-delivery
+      - feat/manual-input-result-verification
   workflow_dispatch:
 
 permissions:

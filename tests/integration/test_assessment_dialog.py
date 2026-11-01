@@ -605,6 +605,90 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     app.processEvents()
 
 
+def test_passport_fields_are_editable_and_restore_nulls(
+    reference_folder: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = read_folder(reference_folder).passport
+    editor = PassportEditor(original)
+    visited: set[str] = set()
+
+    def exercise(root: gui_module.QWidget) -> None:
+        for control in root.findChildren(gui_module.QWidget):
+            name = control.objectName()
+            if not name.startswith("passport.") or name in visited:
+                continue
+            path = tuple(int(part) if part.isdigit() else part for part in name[9:].split("."))
+            before = copy.deepcopy(editor._get(path))
+            if isinstance(control, QComboBox):
+                current = control.currentIndex()
+                control.setCurrentIndex(0 if current else 1)
+                assert editor._get(path) != before, name
+                control.setCurrentIndex(current)
+            elif isinstance(control, (QLineEdit, QPlainTextEdit)):
+                kind = editor._kind(str(path[-1]), before)
+                if isinstance(before, list):
+                    changed = json.dumps([*before, before[0] if before else "AUDIT"], ensure_ascii=False)
+                    restored = json.dumps(before, ensure_ascii=False)
+                elif kind in {"integer", "number"}:
+                    changed = str((before or 0) + 1)
+                    restored = "" if before is None else str(before)
+                else:
+                    changed = str(before or "") + "AUDIT"
+                    restored = "" if before is None else str(before)
+                setter = control.setText if isinstance(control, QLineEdit) else control.setPlainText
+                setter(changed)
+                assert editor._get(path) != before, name
+                setter(restored)
+            else:
+                continue
+            assert editor._get(path) == before, name
+            visited.add(name)
+
+    exercise(editor)
+    monkeypatch.setattr(gui_module.QDialog, "exec", lambda dialog: (exercise(dialog), 0)[1])
+    editor._open_algorithm_settings()
+    for path in (("network", "nodes"), ("network", "links"), ("traffic", "flows"),
+                 ("scenario", "events"), ("measurement", "stability", "checks"),
+                 ("measurement", "adaptivity", "checks")):
+        editor._record_dialog(path, 0, "Поля записи")
+    balance = next(button for button in editor.findChildren(QPushButton)
+                   if button.text() == "Выбрать каналы для балансировки")
+    balance.click()
+
+    def leaf_paths(value, path=()):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield from leaf_paths(item, path + (key,))
+        elif isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+            for item in value:
+                yield from leaf_paths(item, path + ("0",))
+        else:
+            yield ".".join(path)
+
+    covered = {name[9:] for name in visited}
+    advanced_or_generated = {
+        "format_name", "schema_version", "export_status.logging_gaps",
+        "measurement.stability.definition", "measurement.adaptivity.definition",
+        "measurement.adaptivity.note_ru",
+    }
+    missing = {path for path in leaf_paths(original) if path not in covered
+               and not path.startswith(("file_contract.", "export_status.tables."))}
+    assert missing == advanced_or_generated
+    assert editor.value() == original
+
+    blank = gui_module.empty_passport()
+    editor.set_value(blank)
+    nullable = editor.findChild(QLineEdit, "passport.environment.hardware_description")
+    assert nullable is not None
+    nullable.setText("Временное описание")
+    nullable.clear()
+    assert editor.value()["environment"]["hardware_description"] is None
+    editor.close()
+    editor.deleteLater()
+    app.processEvents()
+
+
 def test_passport_summary_cards_and_hidden_record_fields_preserve_input(
     reference_folder: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -900,6 +984,44 @@ def test_table_forms_preserve_csv_fields_and_blank_observations(reference_folder
     app.processEvents()
 
 
+def test_all_csv_record_fields_round_trip_through_detail_cards(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = read_folder(reference_folder).table_strings()
+    for name in ("packets.csv", "routes.csv", "channels.csv"):
+        editor = TableEditor(name)
+        editor.model.set_rows(source[name][:1])
+        editor.view.setCurrentIndex(editor.model.index(0, 1))
+        original = dict(editor.model.rows[0])
+        for key in editor.model.header[1:]:
+            control_name = f"record.{name}.{key}"
+            control = editor.findChild(gui_module.QWidget, control_name)
+            assert control is not None, control_name
+            if isinstance(control, QComboBox):
+                current = control.currentIndex()
+                control.setCurrentIndex(0 if current else 1)
+                assert editor.model.rows[0][key] != original[key], control_name
+                control.setCurrentIndex(current)
+            elif isinstance(control, QPlainTextEdit):
+                before = control.toPlainText()
+                control.setPlainText("AUDIT_LINK")
+                assert editor.model.rows[0][key] != original[key], control_name
+                control.setPlainText(before)
+            else:
+                assert isinstance(control, QLineEdit)
+                control.setText(original[key] + "AUDIT")
+                assert editor.model.rows[0][key] != original[key], control_name
+                control.setText(original[key])
+            if key == "path_links":
+                assert json.loads(editor.model.rows[0][key]) == json.loads(original[key])
+            else:
+                assert editor.model.rows[0][key] == original[key], control_name
+        assert all(editor.model.rows[0][key] == value for key, value in original.items()
+                   if key != "path_links")
+        editor.close()
+        editor.deleteLater()
+    app.processEvents()
+
+
 def test_profile_forms_round_trip_scales_and_edit_weights(monkeypatch: pytest.MonkeyPatch) -> None:
     app = QApplication.instance() or QApplication([])
     original = json.loads((ROOT / "configs/examples/profile_demo.json").read_text())
@@ -934,6 +1056,51 @@ def test_profile_forms_round_trip_scales_and_edit_weights(monkeypatch: pytest.Mo
     assert editor.value()["experts"][0]["name_ru"] == "Источник испытания"
     assert abs(sum(editor.value()["metrics"][key]["weight"] for key in gui_module.METRICS) - 1) < 1e-9
     assert validate_profile(editor.value()) == []
+    editor.close()
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_each_profile_scale_and_weight_is_editable(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = json.loads((ROOT / "configs/examples/profile_demo.json").read_text())
+    editor = ProfileEditor(original)
+    editor.profile_id.setText("AUDIT_PROFILE")
+    assert editor.value()["profile_id"] == "AUDIT_PROFILE"
+    editor.profile_id.setText(original["profile_id"])
+    editor.pages.setCurrentIndex(1)
+    for column, key in enumerate(gui_module.METRICS):
+        weight = original["metrics"][key]["weight"]
+        editor.weights_table.item(0, column).setText("0.001")
+        assert editor.value()["metrics"][key]["weight"] == 0.001
+        editor.weights_table.item(0, column).setText(str(weight))
+        assert editor.value()["metrics"][key]["weight"] == weight
+    for control, key in ((editor.profile_status, "profile_status"),
+                         (editor.basis, "basis_ru"), (editor.note, "note_ru")):
+        setter = control.setText if isinstance(control, QLineEdit) else control.setPlainText
+        setter("Аудит")
+        assert editor.value()[key] == "Аудит"
+        restored = ("Демонстрационный" if key == "profile_status" else original.get(key, ""))
+        setter(restored)
+        assert editor.value()[key] == original.get(key, "")
+
+    editor.pages.setCurrentIndex(0)
+    for row, key in enumerate(gui_module.METRICS):
+        editor.scales_table.setCurrentCell(row, 0)
+        baseline = original["metrics"][key]["points"][0][0]
+
+        def edit_point(dialog: gui_module.QDialog) -> int:
+            points = dialog.findChild(QTableWidget, "profilePoints")
+            assert points is not None
+            points.item(0, 0).setText(str(float(baseline) + 0.001))
+            dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()
+            return 0
+
+        monkeypatch.setattr(gui_module.QDialog, "exec", edit_point)
+        editor.edit_points()
+        assert editor.value()["metrics"][key]["points"][0][0] == float(baseline) + 0.001
+        editor.set_value(original)
+    assert editor.value() == original
     editor.close()
     editor.deleteLater()
     app.processEvents()

@@ -2157,13 +2157,16 @@ class PassportEditor(QWidget):
         elif kind == "string" and (key.endswith("_ru") or len(str(value or "")) > 110):
             control = QPlainTextEdit(str(value or ""))
             control.setFixedHeight(72)
-            control.textChanged.connect(lambda w=control, p=path: self._assign(p, w.toPlainText()))
+            empty_value = None if value is None else ""
+            control.textChanged.connect(lambda w=control, p=path, blank=empty_value:
+                                        self._assign(p, w.toPlainText() or blank))
         else:
             control = QLineEdit()
             control.setText(json.dumps(value, ensure_ascii=False) if kind == "array" else
                             "" if value is None else str(value))
             control.setPlaceholderText("Не задано" if value is None else "")
-            def update(text: str, p=path, k=kind, w=control) -> None:
+            empty_value = None if value is None else ""
+            def update(text: str, p=path, k=kind, w=control, blank=empty_value) -> None:
                 try:
                     if k == "integer":
                         parsed = int(text) if text.strip() else None
@@ -2176,7 +2179,7 @@ class PassportEditor(QWidget):
                         if not isinstance(parsed, list):
                             raise ValueError("Ожидается JSON-массив")
                     else:
-                        parsed = text if text or self._get(p) is not None else None
+                        parsed = text if text else blank
                 except (ValueError, TypeError):
                     self._invalid_fields.add(p)
                     w.setStyleSheet("border: 1px solid #c94343;")

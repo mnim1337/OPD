@@ -9,7 +9,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QPushButton
 
 from scanner.core import calculate
 from scanner.gui import MainWindow
@@ -101,6 +101,20 @@ def test_manual_draft_reopens_and_calculates_without_source_files(
     expected = calculate(imported, profile)
     database = tmp_path / "manual-cycle.sqlite3"
     window = MainWindow(database)
+
+    def click(page, label: str) -> None:
+        button = next(item for item in page.findChildren(QPushButton) if item.text() == label)
+        button.click()
+
+    assert window.pages.currentWidget() is window.start_page
+    click(window.start_page, "Начать")
+    assert window.pages.currentWidget() is window.main_menu_page
+    click(window.main_menu_page, "Эксперименты")
+    assert window.pages.currentWidget() is window.experiments_page
+    click(window.experiments_page, "Начать новый эксперимент")
+    assert window.pages.currentWidget() is window.input_page
+    click(window.input_page, "Открыть формы ввода")
+    assert window.pages.currentWidget() is window.editor_page
     window.passport.set_value(deepcopy(imported.passport))
     window.profile.set_value(deepcopy(profile))
     for name, editor in window.tables.items():
@@ -119,7 +133,12 @@ def test_manual_draft_reopens_and_calculates_without_source_files(
     monkeypatch.setattr(QInputDialog, "getItem", lambda _parent, _title, _prompt, labels, *_args: (
         labels[0], True,
     ))
-    reopened.open_draft()
+    click(reopened.start_page, "Начать")
+    click(reopened.main_menu_page, "Эксперименты")
+    click(reopened.experiments_page, "Продолжить предыдущий")
+    assert reopened.pages.currentWidget() is reopened.results_page
+    click(reopened.results_page, "Продолжить черновик")
+    assert reopened.pages.currentWidget() is reopened.editor_page
     assert reopened.source == "manual"
     assert reopened.profile.value() == profile
     restored, _ = reopened._experiment()
@@ -140,6 +159,24 @@ def test_manual_draft_reopens_and_calculates_without_source_files(
     assert saved_payload["metrics"] == payload["metrics"]
     assert saved_input.tables == imported.tables
     assert saved_profile == profile
+    reopened.close_assessment()
+    assert reopened.pages.currentWidget() is reopened.editor_page
+    click(reopened.editor_page, "Назад")
+    assert reopened.pages.currentWidget() is reopened.experiments_page
+    click(reopened.experiments_page, "Просмотреть результаты")
+    assert reopened.pages.currentWidget() is reopened.results_page
+    assert reopened.results_table.rowCount() == 1
+    click(reopened.results_page, "Открыть выбранную оценку")
+    assert reopened.pages.currentWidget() is reopened.assessment_panel
+    assert reopened.assessment_panel.payload["assessment_id"] == payload["assessment_id"]
+    reopened.close_assessment()
+    click(reopened.results_page, "Назад")
+    click(reopened.experiments_page, "Назад в главное меню")
+    click(reopened.main_menu_page, "Справка")
+    assert reopened.pages.currentWidget() is reopened.help_page
+    click(reopened.help_page, "Назад в главное меню")
+    click(reopened.main_menu_page, "О программе")
+    assert reopened.pages.currentWidget() is reopened.about_page
     reopened.close()
     reopened.deleteLater()
     app.processEvents()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -87,6 +88,60 @@ def test_manual_forms_match_import_after_export_and_calculation(
     window.dirty = False
     window.close()
     window.deleteLater()
+    app.processEvents()
+
+
+def test_manual_draft_reopens_and_calculates_without_source_files(
+    reference_folder: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    imported = read_folder(reference_folder)
+    profile = json.loads((Path(__file__).resolve().parents[2] /
+                          "configs/examples/profile_demo.json").read_text(encoding="utf-8"))
+    expected = calculate(imported, profile)
+    database = tmp_path / "manual-cycle.sqlite3"
+    window = MainWindow(database)
+    window.passport.set_value(deepcopy(imported.passport))
+    window.profile.set_value(deepcopy(profile))
+    for name, editor in window.tables.items():
+        editor.model.set_rows(imported.table_strings()[name])
+    assert not window.original_files
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("manual-cycle", True))
+    assert window.save_draft()
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+    for path in reference_folder.iterdir():
+        path.unlink()
+    reference_folder.rmdir()
+    reopened = MainWindow(database)
+    monkeypatch.setattr(QInputDialog, "getItem", lambda _parent, _title, _prompt, labels, *_args: (
+        labels[0], True,
+    ))
+    reopened.open_draft()
+    assert reopened.source == "manual"
+    assert reopened.profile.value() == profile
+    restored, _ = reopened._experiment()
+    assert restored.tables == imported.tables
+    reopened.run_assessment()
+    deadline = time.monotonic() + 10
+    while reopened.assessment_worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+    assert reopened.assessment_worker is None
+    assert reopened.assessment_panel is not None
+    payload = reopened.assessment_panel.payload
+    assert payload["assessment_id"]
+    assert payload["metrics"] == expected.as_dict()["metrics"]
+    assert payload["integral"] == expected.as_dict()["integral"]
+    saved_payload, saved_input, saved_profile = reopened.store.load_assessment(payload["assessment_id"])
+    assert saved_payload["metrics"] == payload["metrics"]
+    assert saved_input.tables == imported.tables
+    assert saved_profile == profile
+    reopened.close()
+    reopened.deleteLater()
     app.processEvents()
 
 

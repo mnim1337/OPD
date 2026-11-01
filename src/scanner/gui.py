@@ -237,6 +237,70 @@ def _display_result(value: dict[str, Any]) -> str:
     return RESULT_STATUS_LABELS.get(value.get("status"), "не определено")
 
 
+def _metric_trace_lines(key: str, trace: dict[str, Any]) -> list[str]:
+    """Explain recorded K1 inputs without recomputing any indicator in the GUI."""
+    if key in {"P_zad", "P_pr", "P_pot"}:
+        window = trace.get("time_window_s") or []
+        lines = []
+        if len(window) == 2:
+            lines.append(f"Окно отправок: [{_display_number(window[0])}; "
+                         f"{_display_number(window[1])}) с; срок доставки: "
+                         f"{_display_number(trace.get('loss_timeout_s'))} с.")
+        if "sent_packets" in trace:
+            lines.append(
+                f"Отправок: {trace['sent_packets']}; доставлено в срок: "
+                f"{trace.get('timely_received', 'не установлено')}; подтверждённых потерь: "
+                f"{trace.get('confirmed_lost', 'не установлено')}; исход неизвестен: "
+                f"{trace.get('unknown_packets', 'не установлено')}."
+            )
+        if "received_in_window" in trace:
+            lines.append(
+                f"Первые корректные приёмы в основном окне: {trace['received_in_window']}; "
+                f"полезных байт: {trace.get('payload_received_in_window_bytes', '—')}; "
+                f"поздних приёмов отправок основного окна: {trace.get('received_after_window', '—')}."
+            )
+        return lines
+    if key == "P_bal":
+        intervals = trace.get("intervals") or []
+        exact = sum(row.get("status") == "exact" for row in intervals)
+        unknown = sum(row.get("status") == "unknown" for row in intervals)
+        omitted = sum(row.get("status") == "not_applicable" for row in intervals)
+        return [f"Интервалов сетки: {len(intervals)}; рассчитано: {exact}; "
+                f"неизвестно: {unknown}; неприменимо: {omitted}."]
+    if key == "P_ust":
+        checks = trace.get("checks") or []
+        lines = [f"Назначенных проверок пути: {len(checks)}."]
+        for check in checks[:8]:
+            path = " → ".join(check.get("path_links") or []) or "путь не зарегистрирован"
+            passed = {True: "пройдена", False: "не пройдена", None: "неизвестно"}.get(check.get("passed"), "неизвестно")
+            lines.append(f"{check.get('check_id', '—')}, поток {check.get('flow_id', '—')}: "
+                         f"[{_display_number(check.get('start_s'))}; "
+                         f"{_display_number(check.get('end_s'))}) с; {path}; {passed}.")
+        if len(checks) > 8:
+            lines.append(f"Остальные {len(checks) - 8} проверок — в технической трассе.")
+        return lines
+    if key == "P_ad":
+        checks = trace.get("checks") or []
+        lines = [f"Назначенных задач перестроения: {len(checks)}."]
+        for check in checks[:8]:
+            status = check.get("status", "unknown")
+            detail = (f"время {_display_number(check['time_s'])} с" if "time_s" in check else
+                      f"нижняя граница {_display_number(check['lower_s'])} с" if "lower_s" in check else
+                      str(check.get("reason") or "точное время не установлено"))
+            lines.append(f"{check.get('check_id', '—')}: {status}; {detail}.")
+        if len(checks) > 8:
+            lines.append(f"Остальные {len(checks) - 8} задач — в технической трассе.")
+        return lines
+    if key == "P_res":
+        window = trace.get("window_s") or []
+        prefix = (f"Окно счётчиков: [{_display_number(window[0])}; {_display_number(window[1])}) с; "
+                  if len(window) == 2 else "")
+        return [prefix + f"служебных байт не менее {_display_number(trace.get('complete_bytes_lower'))}, "
+                f"не более {_display_number(trace.get('possible_bytes_upper'))}; "
+                f"неполных интервалов: {trace.get('incomplete_intervals', '—')}."]
+    return []
+
+
 class RadarChart(QWidget):
     def __init__(self, payload: dict[str, Any], parent: QWidget | None = None):
         super().__init__(parent)
@@ -1240,7 +1304,8 @@ class AssessmentDialog(QWidget):
                            "P_ust": "(3.24)–(3.26)", "P_res": "(3.31)"}.get(key)
                 if formula:
                     lines.append(f"Формула: {formula}")
-                lines.append("Исходные выборки и счётчики доступны в технической трассе.")
+            lines.extend(_metric_trace_lines(key, trace))
+            lines.append("Полная исходная трасса доступна через кнопку ниже.")
             metric_explanation.setText("\n\n".join(lines))
         metric_picker.currentIndexChanged.connect(show_metric_explanation)
         if metric_picker.findData("P_ad") >= 0:

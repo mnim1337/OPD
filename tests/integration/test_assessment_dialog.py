@@ -266,6 +266,31 @@ def test_timeline_preserves_physical_path_states_across_one_installed_route(refe
     app.processEvents()
 
 
+def test_timeline_distinguishes_loop_and_recorded_unknown(reference_folder: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    chart = TimelineChart(read_folder(reference_folder))
+    flow_id = next(iter(chart.context.flows))
+    route = chart.context.by_flow[flow_id][0]
+    chart.resize(1100, max(chart.minimumHeight(), 320))
+    chart.show()
+    app.processEvents()
+    x = round(175 + (chart.width() - 28 - 175) * 1.7 / 11)
+    route["route_state"] = "loop"
+    chart.update()
+    app.processEvents()
+    assert chart.grab().toImage().pixelColor(x, 87) == QColor("#9467BD")
+
+    route["route_state"] = "unknown"
+    chart.update()
+    app.processEvents()
+    image = chart.grab().toImage()
+    assert any(image.pixelColor(xx, yy) == QColor("#E4C95C")
+               for xx in range(x - 8, x + 8) for yy in range(86, 103))
+    chart.close()
+    chart.deleteLater()
+    app.processEvents()
+
+
 def test_comparison_view_explains_incomparable_conditions_without_ranking() -> None:
     app = QApplication.instance() or QApplication([])
     metrics = {
@@ -447,6 +472,21 @@ def test_explanation_tab_separates_rebuild_time_and_confirmation_window(
     assert "0,200 с" in dialog.findChild(QLineEdit, "confirmationCheck").text()
     assert any("4,600 − 4,000 = 0,600 с" in label.text()
                for label in dialog.findChildren(QLabel))
+    picker = next(combo for combo in dialog.findChildren(QComboBox)
+                  if combo.findData("P_zad") >= 0 and combo.findData("P_res") >= 0)
+    picker.setCurrentIndex(picker.findData("P_zad"))
+    packet_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Окно отправок:" in packet_text
+    assert "Отправок: 480" in packet_text
+    assert "Первые корректные приёмы в основном окне:" in packet_text
+    picker.setCurrentIndex(picker.findData("P_ust"))
+    stability_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Назначенных проверок пути:" in stability_text
+    assert "пройдена" in stability_text or "не пройдена" in stability_text
+    picker.setCurrentIndex(picker.findData("P_res"))
+    service_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Окно счётчиков:" in service_text
+    assert "неполных интервалов:" in service_text
     assert any("Демонстрационный профиль Ω" in warning for warning in data["warnings"])
     dialog.close()
     dialog.deleteLater()

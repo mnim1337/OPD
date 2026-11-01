@@ -528,9 +528,9 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     numeric.setText("2")
     assert editor.value()["network"]["nodes"][0]["plane_id"] == 2
     add = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
-               if button.text() == "Добавить запись")
+               if button.text() == "Добавить строку")
     delete = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
-                  if button.text() == "Удалить запись")
+                  if button.text() == "Удалить")
     count = len(editor.value()["network"]["nodes"])
     add.click()
     assert len(editor.value()["network"]["nodes"]) == count + 1
@@ -538,6 +538,114 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     assert len(editor.value()["network"]["nodes"]) == count
     editor.set_value(original)
     assert editor.value() == original
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_passport_summary_cards_and_hidden_record_fields_preserve_input(
+    reference_folder: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = read_folder(reference_folder).passport
+    editor = PassportEditor(original)
+    for tab, headings in (
+        (2, ("Узел", "Тип", "Плоскость", "Начальное состояние")),
+        (3, ("Канал", "Откуда", "Куда", "Доступен")),
+        (4, ("Поток", "Источник", "Получатель", "Тип")),
+        (5, ("Событие", "Тип", "План, с", "Факт, с", "Результат")),
+    ):
+        table = editor.tabs.widget(tab).findChild(QTableWidget, "passportSummary")
+        assert table is not None
+        assert tuple(table.horizontalHeaderItem(i).text() for i in range(table.columnCount())) == headings
+        assert table.verticalHeader().isHidden()
+        assert table.rowCount() == len({
+            2: original["network"]["nodes"], 3: original["network"]["links"],
+            4: original["traffic"]["flows"], 5: original["scenario"]["events"],
+        }[tab])
+    clipboard = QApplication.clipboard()
+    previous_clipboard = clipboard.text()
+    try:
+        clipboard.setText("Узел\tТип\tПлоскость\tНачальное состояние\nN7\tsatellite\t2\tДа")
+        paste = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
+                     if button.text() == "Вставить таблицу")
+        paste.click()
+        assert editor.value()["network"]["nodes"][-1] == {
+            "node_id": "N7", "node_type": "satellite", "plane_id": 2, "initial_up": True,
+        }
+    finally:
+        clipboard.setText(previous_clipboard)
+    editor.tabs.setCurrentIndex(4)
+    details = editor.findChild(QLineEdit, "passport.traffic.flows.0.packetization.payload_bytes")
+    assert details is not None
+    details.setText("1200")
+    assert editor.value()["traffic"]["flows"][0]["packetization"]["payload_bytes"] == 1200
+
+    def edit_full_record(dialog: gui_module.QDialog) -> int:
+        interval = dialog.findChild(QLineEdit, "passport.traffic.flows.0.generation.interval_s")
+        assert interval is not None
+        interval.setText("0.75")
+        return 0
+
+    monkeypatch.setattr(gui_module.QDialog, "exec", edit_full_record)
+    more = next(button for button in editor.tabs.widget(4).findChildren(QPushButton)
+                if button.text() == "Генерация трафика и повторные передачи")
+    more.click()
+    assert editor.value()["traffic"]["flows"][0]["generation"]["interval_s"] == 0.75
+    assert original["traffic"]["flows"][0]["packetization"]["payload_bytes"] != 1200
+    editor.deleteLater()
+    app.processEvents()
+
+
+def test_passport_checks_and_completeness_keep_editable_fields(
+    reference_folder: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = read_folder(reference_folder).passport
+    editor = PassportEditor(original)
+    checks = editor.tabs.widget(7).findChildren(QTableWidget, "passportChecks")
+    assert len(checks) == 2
+    assert [table.rowCount() for table in checks] == [
+        len(original["measurement"]["stability"]["checks"]),
+        len(original["measurement"]["adaptivity"]["checks"]),
+    ]
+
+    def edit_check(dialog: gui_module.QDialog) -> int:
+        start = dialog.findChild(QLineEdit, "passport.measurement.stability.checks.0.time_start_s")
+        assert start is not None
+        start.setText("1.25")
+        return 0
+
+    monkeypatch.setattr(gui_module.QDialog, "exec", edit_check)
+    change = next(button for button in editor.tabs.widget(7).findChildren(QPushButton)
+                  if button.text() == "Изменить")
+    change.click()
+    assert editor.value()["measurement"]["stability"]["checks"][0]["time_start_s"] == 1.25
+    summary = editor.tabs.widget(8).findChild(QTableWidget, "passportFormatSummary")
+    assert summary is not None and summary.rowCount() == 6
+    assert summary.item(4, 1).text() == "40 / 8 / 156"
+    complete = editor.tabs.widget(8).findChild(QComboBox, "passport.export_status.complete")
+    assert complete is not None
+    complete.setCurrentIndex(2)
+    assert editor.value()["export_status"]["complete"] is False
+    assert editor.value()["file_contract"] == original["file_contract"]
+
+    def edit_additional(dialog: gui_module.QDialog) -> int:
+        fields = dialog.findChild(QTableWidget, "passportAdditionalFields")
+        assert fields is not None and fields.rowCount() >= 7
+        assert fields.item(0, 0).text() == "algorithm"
+        fields.setCurrentCell(0, 0)
+        button = next(item for item in dialog.findChildren(QPushButton)
+                      if item.text() == "Редактировать выбранное поле")
+        button.click()
+        return 0
+
+    monkeypatch.setattr(gui_module.QDialog, "exec", edit_additional)
+    monkeypatch.setattr(gui_module.QInputDialog, "getMultiLineText",
+                        lambda *_args: ("Проверено вручную", True))
+    button = next(item for item in editor.tabs.widget(8).findChildren(QPushButton)
+                  if item.text() == "Все поля формата и дополнительные параметры")
+    button.click()
+    assert editor.value()["algorithm"]["settings_completeness"] == "Проверено вручную"
     editor.deleteLater()
     app.processEvents()
 

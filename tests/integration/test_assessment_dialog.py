@@ -577,6 +577,10 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
         "Наблюдение", "Проверки", "Полнота",
     ]
     assert editor.value() == original
+    source = editor.findChild(QComboBox, "passport.environment.execution_source")
+    assert source is not None
+    source.setEditText("custom_pak")
+    assert editor.value()["environment"]["execution_source"] == "custom_pak"
     experiment_id = editor.findChild(QLineEdit, "passport.experiment_id")
     assert experiment_id is not None
     experiment_id.setText("NEW_EXPERIMENT")
@@ -589,13 +593,18 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     assert editor.value()["network"]["nodes"][0]["node_id"] == "RENAMED_NODE"
     nodes = editor.tabs.widget(2).findChild(QTableWidget)
     assert nodes.item(0, 0).text() == "RENAMED_NODE"
-    numeric = editor.findChild(QLineEdit, "passport.network.nodes.0.plane_id")
+    numeric = editor.findChild(QLineEdit, "passport.environment.buffer_limit_bytes")
     assert numeric is not None
     numeric.setText("ошибка")
-    with pytest.raises(ValueError, match="network.nodes.0.plane_id"):
+    with pytest.raises(ValueError, match="environment.buffer_limit_bytes"):
         editor.value()
-    numeric.setText("2")
-    assert editor.value()["network"]["nodes"][0]["plane_id"] == 2
+    numeric.setText("2048")
+    assert editor.value()["environment"]["buffer_limit_bytes"] == 2048
+    nodes.selectRow(1)
+    plane = editor.findChild(QLineEdit, "passport.network.nodes.1.plane_id")
+    assert plane is not None
+    plane.setText("PL02")
+    assert editor.value()["network"]["nodes"][1]["plane_id"] == "PL02"
     add = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
                if button.text() == "Добавить строку")
     delete = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
@@ -636,6 +645,9 @@ def test_passport_fields_are_editable_and_restore_nulls(
                 if isinstance(before, list):
                     changed = json.dumps([*before, before[0] if before else "AUDIT"], ensure_ascii=False)
                     restored = json.dumps(before, ensure_ascii=False)
+                elif isinstance(before, dict):
+                    changed = json.dumps({**before, "audit": 1}, ensure_ascii=False)
+                    restored = json.dumps(before, ensure_ascii=False)
                 elif kind in {"integer", "number"}:
                     changed = str((before or 0) + 1)
                     restored = "" if before is None else str(before)
@@ -654,6 +666,8 @@ def test_passport_fields_are_editable_and_restore_nulls(
     exercise(editor)
     monkeypatch.setattr(gui_module.QDialog, "exec", lambda dialog: (exercise(dialog), 0)[1])
     editor._open_algorithm_settings()
+    editor._environment_note_dialog()
+    editor._network_settings_dialog()
     for path in (("network", "nodes"), ("network", "links"), ("traffic", "flows"),
                  ("scenario", "events"), ("measurement", "stability", "checks"),
                  ("measurement", "adaptivity", "checks")):
@@ -718,12 +732,12 @@ def test_passport_summary_cards_and_hidden_record_fields_preserve_input(
     clipboard = QApplication.clipboard()
     previous_clipboard = clipboard.text()
     try:
-        clipboard.setText("Узел\tТип\tПлоскость\tНачальное состояние\nN7\tsatellite\t2\tДа")
+        clipboard.setText("Узел\tТип\tПлоскость\tНачальное состояние\nN7\tsatellite\tPL02\tДа")
         paste = next(button for button in editor.tabs.widget(2).findChildren(QPushButton)
                      if button.text() == "Вставить таблицу")
         paste.click()
         assert editor.value()["network"]["nodes"][-1] == {
-            "node_id": "N7", "node_type": "satellite", "plane_id": 2, "initial_up": True,
+            "node_id": "N7", "node_type": "satellite", "plane_id": "PL02", "initial_up": True,
         }
     finally:
         clipboard.setText(previous_clipboard)
@@ -1393,6 +1407,9 @@ def test_experiments_menu_routes_new_continue_results_and_main_menu(
         button.click()
 
     click(window.start_page, "Начать")
+    primary = window.main_menu_page.findChild(QPushButton, "menuPrimary")
+    assert primary is not None
+    assert primary.minimumHeight() >= 60
     click(window.main_menu_page, "Эксперименты")
     click(window.experiments_page, "Начать новый эксперимент")
     assert window.pages.currentWidget() is window.input_page

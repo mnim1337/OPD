@@ -75,6 +75,8 @@ QLabel#fieldLabel { color: #71879f; font-size: 12px; }
 QLabel#fieldKey { color: #9aacc0; font-size: 10px; }
 QLabel#infoNote { background: #e7effb; color: #2d62c6; border-radius: 8px;
                   padding: 13px 16px; font-size: 13px; }
+QWidget#environmentState QPlainTextEdit { background: #e7effb; color: #2d62c6;
+    border: 0; border-radius: 8px; padding: 8px 12px; }
 QFrame#contentCard { background: #ffffff; border: 1px solid #d9e4f2; border-radius: 12px; }
 QFrame#footerBar { background: #ffffff; border-top: 1px solid #d9e4f2; }
 QPushButton { background: #ffffff; color: #203650; border: 1px solid #d9e4f2;
@@ -83,6 +85,7 @@ QPushButton:hover { border-color: #2d62c6; background: #f3f7ff; }
 QPushButton:disabled { color: #9bacc0; background: #f3f6fa; }
 QPushButton[variant="primary"] { background: #2d62c6; color: #ffffff; border-color: #2d62c6; }
 QPushButton[variant="primary"]:hover { background: #2257b9; }
+QPushButton#menuPrimary { min-height: 44px; }
 QTabWidget::pane { border: 0; background: transparent; }
 QTabBar::tab { background: #ffffff; color: #71879f; border: 1px solid #d9e4f2;
                padding: 9px 18px; margin-right: 3px; border-radius: 6px; }
@@ -92,6 +95,7 @@ QToolButton#utilityMenu { color: #ffffff; background: #244462; border: 1px solid
 QToolButton#utilityMenu:hover { background: #315576; }
 QLineEdit { background: #ffffff; color: #203650; border: 1px solid #d9e4f2;
             border-radius: 6px; padding: 6px 9px; min-height: 24px; }
+QComboBox[passportField="true"] { padding: 6px 9px; min-height: 24px; }
 QTableView, QTableWidget, QTreeWidget, QComboBox, QPlainTextEdit {
     background: #ffffff; color: #203650; border: 1px solid #d9e4f2; border-radius: 6px;
     selection-background-color: #e6efff; selection-color: #203650;
@@ -1971,17 +1975,17 @@ PASSPORT_LABELS = {
     "name_ru": "Наименование реализации", "implementation_version": "Версия",
     "routing_mode": "Режим маршрутизации", "implementation_sha256": "SHA-256 реализации",
     "settings": "Настройки алгоритма", "settings_completeness": "Полнота настроек",
-    "note_ru": "Примечание", "execution_source": "Источник исполнения",
+    "note_ru": "Примечание", "execution_source": "Источник выполнения",
     "pak_version": "Версия ПАК", "time_mode": "Режим времени",
-    "hardware_description": "Оборудование", "queue_discipline": "Дисциплина очереди",
+    "hardware_description": "Вычислительная среда", "queue_discipline": "Дисциплина очереди",
     "initial_state_ru": "Начальное состояние", "seeds": "Начальные состояния генераторов",
     "model": "Модель ошибок",
-    "buffer_limit_bytes": "Буфер, байт", "link_errors": "Ошибки каналов",
-    "randomness": "Случайность", "used": "Используется",
+    "buffer_limit_bytes": "Ограничение буфера, байт", "link_errors": "Ошибки каналов",
+    "randomness": "Случайность", "used": "Случайность",
     "network_id": "Идентификатор сети", "directed": "Направленные каналы",
     "orbital_description": "Описание орбитальной конфигурации",
-    "node_id": "Узел", "node_type": "Тип узла", "plane_id": "Плоскость",
-    "initial_up": "Начальная доступность", "link_id": "Канал",
+    "node_id": "Идентификатор", "node_type": "Тип", "plane_id": "Плоскость",
+    "initial_up": "Доступность в начале", "link_id": "Канал",
     "node_from": "От узла", "node_to": "К узлу",
     "interface_from": "Исходящий интерфейс", "interface_to": "Входящий интерфейс",
     "link_type": "Тип соединения", "initial_capacity_bps": "Скорость, бит/с",
@@ -2071,15 +2075,19 @@ PASSPORT_ARRAY_PRESENTATION = {
 }
 
 PASSPORT_DISPLAY_VALUES = {
+    "execution_source": {"synthetic_reference_builder": "Контрольный генератор данных"},
     "node_type": {"ground_station": "Наземная станция", "satellite": "Спутник"},
     "link_type": {"ground_space": "Земля — космос", "space_space": "Космос — космос"},
     "event_type": {"link_down": "Отключение", "link_up": "Восстановление"},
     "object_type": {"directed_links": "Направленные каналы"},
     "result": {"executed": "Выполнено", "not_executed": "Не выполнено"},
     "transport": {"udp": "UDP", "tcp": "TCP"},
+    "time_mode": {"model_time": "Модельное время", "real_time": "Реальное время"},
+    "model": {"none_except_scheduled_outage": "Только заданное отключение"},
 }
 
 PASSPORT_ENUM_LABELS = {
+    "execution_source": {"synthetic_reference_builder": "Контрольный генератор данных"},
     "node_type": {"ground_station": "Наземная станция", "satellite": "Спутник"},
     "link_type": {"ground_space": "Земля — космос", "space_space": "Космос — космос",
                   "ground_ground": "Земля — земля"},
@@ -2087,6 +2095,8 @@ PASSPORT_ENUM_LABELS = {
     "object_type": {"directed_links": "Направленные каналы"},
     "result": {"executed": "Выполнено", "not_executed": "Не выполнено"},
     "transport": {"UDP": "UDP", "TCP": "TCP", "udp": "UDP", "tcp": "TCP"},
+    "time_mode": {"model_time": "Модельное время", "real_time": "Реальное время"},
+    "model": {"none_except_scheduled_outage": "Только заданное отключение"},
 }
 
 
@@ -2139,6 +2149,12 @@ class PassportEditor(QWidget):
         previous = node.get(path[-1]) if isinstance(node, dict) else node[path[-1]]
         if previous != value:
             node[path[-1]] = value
+            if path[:2] == ("network", "orbital_description"):
+                summary = self.findChild(QLineEdit, "orbitalSummary")
+                if summary is not None:
+                    description = self._get(("network", "orbital_description"))
+                    summary.setText(self._orbital_summary(description))
+                    summary.setToolTip(json.dumps(description, ensure_ascii=False))
             for array_path, table in self._array_tables.items():
                 if path[:len(array_path)] == array_path and len(path) > len(array_path):
                     row = path[len(array_path)]
@@ -2162,6 +2178,15 @@ class PassportEditor(QWidget):
         return PASSPORT_DISPLAY_VALUES.get(key, {}).get(str(value), str(value))
 
     @staticmethod
+    def _orbital_summary(description: Any) -> str:
+        if isinstance(description, dict) and description.get("type") == "abstract_topology":
+            summary = "Абстрактная топология"
+            if description.get("orbital_elements") is None:
+                summary += "; элементы орбит не заданы"
+            return summary
+        return PassportEditor._display_value("orbital_description", description)
+
+    @staticmethod
     def _label(key: str) -> str:
         return PASSPORT_LABELS.get(key, key.replace("_", " ").capitalize())
 
@@ -2170,12 +2195,14 @@ class PassportEditor(QWidget):
         if isinstance(value, bool) or key in {"directed", "initial_up", "used", "complete",
                                                    "data_logging_complete", "channel_categories_disjoint"}:
             return "boolean"
-        if isinstance(value, int) or key.endswith(("_count", "_index")) or key in {"repeat_id", "plane_id"}:
+        if isinstance(value, int) or key.endswith(("_count", "_index")) or key == "repeat_id":
             return "integer"
         if isinstance(value, float) or key.endswith(("_s", "_bps", "_bytes")):
             return "number"
         if isinstance(value, list):
             return "array"
+        if isinstance(value, dict):
+            return "object"
         return "string"
 
     def _field(self, key: str, value: Any, path: tuple[str | int, ...]) -> QWidget:
@@ -2191,12 +2218,17 @@ class PassportEditor(QWidget):
         kind = self._kind(key, value)
         if kind == "boolean":
             control = QComboBox()
+            control.setProperty("passportField", True)
             control.addItems(["Не задано", "Да", "Нет"])
             control.setCurrentIndex(0 if value is None else 1 if value else 2)
             control.currentIndexChanged.connect(
                 lambda index, p=path: self._assign(p, None if index == 0 else index == 1))
         elif kind == "string" and key in PASSPORT_ENUM_LABELS:
             control = QComboBox()
+            control.setProperty("passportField", True)
+            allows_custom_value = key in {"execution_source", "time_mode", "model"}
+            if allows_custom_value:
+                control.setEditable(True)
             control.addItem("Не задано", None)
             for code, label in PASSPORT_ENUM_LABELS[key].items():
                 control.addItem(label, code)
@@ -2207,7 +2239,12 @@ class PassportEditor(QWidget):
             control.setCurrentIndex(max(index, 0))
             control.currentIndexChanged.connect(
                 lambda _index, p=path, w=control: self._assign(p, w.currentData()))
-        elif kind == "string" and (key.endswith("_ru") or len(str(value or "")) > 110):
+            if allows_custom_value:
+                labels = {label: code for code, label in PASSPORT_ENUM_LABELS[key].items()}
+                control.editTextChanged.connect(
+                    lambda text, p=path, mapping=labels: self._assign(p, mapping.get(text, text or None)))
+        elif kind == "string" and (key.endswith("_ru") or key == "orbital_description"
+                                   or len(str(value or "")) > 110):
             control = QPlainTextEdit(str(value or ""))
             control.setFixedHeight(72)
             empty_value = None if value is None else ""
@@ -2215,7 +2252,7 @@ class PassportEditor(QWidget):
                                         self._assign(p, w.toPlainText() or blank))
         else:
             control = QLineEdit()
-            control.setText(json.dumps(value, ensure_ascii=False) if kind == "array" else
+            control.setText(json.dumps(value, ensure_ascii=False) if kind in {"array", "object"} else
                             "" if value is None else str(value))
             control.setPlaceholderText("Не задано" if value is None else "")
             empty_value = None if value is None else ""
@@ -2227,10 +2264,10 @@ class PassportEditor(QWidget):
                         parsed = float(text.replace(",", ".")) if text.strip() else None
                         if parsed is not None and not math.isfinite(parsed):
                             raise ValueError("Число должно быть конечным")
-                    elif k == "array":
-                        parsed = json.loads(text) if text.strip() else []
-                        if not isinstance(parsed, list):
-                            raise ValueError("Ожидается JSON-массив")
+                    elif k in {"array", "object"}:
+                        parsed = json.loads(text) if text.strip() else ([] if k == "array" else {})
+                        if not isinstance(parsed, list if k == "array" else dict):
+                            raise ValueError("Ожидается JSON-массив" if k == "array" else "Ожидается JSON-объект")
                     else:
                         parsed = text if text else blank
                 except (ValueError, TypeError):
@@ -2299,6 +2336,63 @@ class PassportEditor(QWidget):
         content.addStretch()
         parent.addWidget(card)
         return card
+
+    def _environment_section(self, parent: QVBoxLayout) -> None:
+        environment = self._get(("environment",))
+        if not isinstance(environment, dict):
+            return
+        card = QFrame()
+        card.setObjectName("contentCard")
+        content = QVBoxLayout(card)
+        content.setContentsMargins(22, 20, 22, 20)
+        content.setSpacing(16)
+        fields = (
+            (("execution_source",), ("pak_version",), ("time_mode",)),
+            (("hardware_description",), ("queue_discipline",), ("buffer_limit_bytes",)),
+            (("randomness", "used"), ("randomness", "seeds"), ("link_errors", "model")),
+        )
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(12)
+        for row, paths in enumerate(fields):
+            for column, field_path in enumerate(paths):
+                grid.addWidget(self._field(field_path[-1], self._get(("environment",) + field_path),
+                                           ("environment",) + field_path), row, column)
+        content.addLayout(grid)
+        if "initial_state_ru" in environment:
+            state = self._field("initial_state_ru", environment["initial_state_ru"],
+                                ("environment", "initial_state_ru"))
+            state.setObjectName("environmentState")
+            content.addWidget(state)
+        if "note_ru" in environment:
+            note = QPushButton("Примечание и дополнительные условия")
+            note.clicked.connect(lambda: self._environment_note_dialog())
+            content.addWidget(note, alignment=Qt.AlignmentFlag.AlignLeft)
+        parent.addWidget(card)
+
+    def _environment_note_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Примечание к среде выполнения")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(self._field("note_ru", self._get(("environment", "note_ru")),
+                                     ("environment", "note_ru")))
+        close = QPushButton("Закрыть")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
+
+    def _network_settings_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Параметры сети")
+        layout = QVBoxLayout(dialog)
+        network = self._get(("network",))
+        if isinstance(network, dict):
+            self._fields(layout, network, ("network",),
+                         ("network_id", "directed", "orbital_description"))
+        close = QPushButton("Закрыть")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
 
     def _open_algorithm_settings(self) -> None:
         dialog = QDialog(self)
@@ -2398,7 +2492,12 @@ class PassportEditor(QWidget):
         detail_body_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.addWidget(detail_body, 1)
         more = QPushButton(spec.get("more", "Все поля выбранной записи"))
-        detail_layout.addWidget(more)
+        if path_name == "network.nodes":
+            network_settings = QPushButton("Параметры сети")
+            network_settings.clicked.connect(self._network_settings_dialog)
+            detail_layout.addWidget(network_settings, alignment=Qt.AlignmentFlag.AlignLeft)
+        else:
+            detail_layout.addWidget(more)
         row.addWidget(detail_card, spec["ratio"][1])
         parent.addLayout(row)
 
@@ -2418,7 +2517,8 @@ class PassportEditor(QWidget):
                 return
             record = array[selected]
             identifier = self._display_value(columns[0], record.get(columns[0]))
-            detail_heading.setText(f"{spec['detail_title']}: {identifier}")
+            detail_heading.setText(spec["detail_title"] if path_name == "network.nodes" else
+                                   f"{spec['detail_title']}: {identifier}")
             grid_holder = QWidget()
             grid_holder.setObjectName("passportDetailContent")
             grid = QGridLayout(grid_holder)
@@ -2430,6 +2530,20 @@ class PassportEditor(QWidget):
                 grid.addWidget(self._field(field_path[-1], value, path + (selected,) + field_path),
                                position // 2, position % 2)
             detail_body_layout.addWidget(grid_holder)
+            if path_name == "network.nodes":
+                description = self._get(("network", "orbital_description"))
+                if description is not None:
+                    caption = QLabel("Описание орбитального построения")
+                    caption.setObjectName("fieldLabel")
+                    detail_body_layout.addWidget(caption)
+                    orbital_summary = QLineEdit(self._orbital_summary(description))
+                    orbital_summary.setObjectName("orbitalSummary")
+                    orbital_summary.setReadOnly(True)
+                    orbital_summary.setToolTip(json.dumps(description, ensure_ascii=False))
+                    detail_body_layout.addWidget(orbital_summary)
+                    key = QLabel("network.orbital_description")
+                    key.setObjectName("fieldKey")
+                    detail_body_layout.addWidget(key)
             detail_body_layout.addStretch()
 
         def refresh(selected: int = 0) -> None:
@@ -2438,12 +2552,19 @@ class PassportEditor(QWidget):
             for index, item in enumerate(array):
                 for column, key in enumerate(columns):
                     value = item.get(key) if isinstance(item, dict) else None
-                    table.setItem(index, column, QTableWidgetItem(self._display_value(key, value)))
+                    display = self._display_value(key, value)
+                    if path_name == "network.nodes" and key == "initial_up" and value is not None:
+                        display = "Доступен" if value else "Недоступен"
+                    table.setItem(index, column, QTableWidgetItem(display))
             table.blockSignals(False)
             if array:
                 table.selectRow(min(max(selected, 0), len(array) - 1))
             else:
                 table.clearSelection()
+            if path_name == "network.nodes":
+                satellites = sum(isinstance(node, dict) and node.get("node_type") == "satellite" for node in array)
+                stations = sum(isinstance(node, dict) and node.get("node_type") == "ground_station" for node in array)
+                list_note.setText(f"{len(array)} узлов: {satellites} спутника и {stations} наземные станции. Число вычисляется по перечню.")
             show_detail()
 
         def add_item() -> None:
@@ -2872,13 +2993,9 @@ class PassportEditor(QWidget):
             algorithm_layout.insertWidget(algorithm_layout.count() - 1, settings)
             layout.addLayout(cards)
         elif index == 1:
-            self._card(layout, "Среда выполнения и источник", self._get(("environment",)),
-                       ("environment",), wide_keys=frozenset({"initial_state_ru", "note_ru"}),
-                       columns=3)
+            self._environment_section(layout)
         elif index == 2:
             self._array_card(layout, "Узлы сети", ("network", "nodes"))
-            self._card(layout, "Сеть", self._get(("network",)), ("network",),
-                       ("network_id", "directed", "orbital_description"))
         elif index == 3:
             self._array_card(layout, "Направленные соединения", ("network", "links"))
         elif index == 4:
@@ -4056,8 +4173,8 @@ class MainWindow(QMainWindow):
             if title == "Главное меню":
                 menu_actions = dict(main_actions)
                 primary = action("Эксперименты", menu_actions["Эксперименты"], primary=True)
-                primary.setMinimumWidth(450)
-                primary.setMinimumHeight(56)
+                primary.setObjectName("menuPrimary")
+                primary.setMinimumWidth(500)
                 card_layout.addWidget(primary, alignment=Qt.AlignmentFlag.AlignHCenter)
                 secondary = QHBoxLayout()
                 for label in ("Справка", "О программе"):

@@ -71,6 +71,11 @@ QLabel#heroEyebrow { color: #9dbbd9; font-size: 12px; font-weight: 700; }
 QLabel#cardTitle { color: #203650; font-size: 19px; font-weight: 700; }
 QLabel#cardDescription { color: #71879f; font-size: 14px; }
 QLabel#scoreValue { color: #2d62c6; font-size: 36px; font-weight: 700; }
+QLabel#resultStatus { background: #e7effb; color: #2d62c6; border-radius: 10px;
+                      padding: 5px 12px; font-size: 13px; font-weight: 700; }
+QLabel#resultStatus[status="exact"] { background: #e7f4ef; color: #14847c; }
+QLabel#resultAlgorithm { color: #203650; font-size: 22px; font-weight: 700; }
+QTableWidget#resultTable, QTableWidget#comparisonSummary { font-size: 14px; }
 QLabel#fieldLabel { color: #71879f; font-size: 12px; }
 QLabel#fieldKey { color: #9aacc0; font-size: 10px; }
 QLabel#infoNote { background: #e7effb; color: #2d62c6; border-radius: 8px;
@@ -294,6 +299,41 @@ def _display_result(value: dict[str, Any]) -> str:
     return RESULT_STATUS_LABELS.get(value.get("status"), "не определено")
 
 
+def _result_raw_for_table(key: str, raw: dict[str, Any]) -> tuple[str, str]:
+    """Present exact SI measurements in the units used by the visual album."""
+    if raw.get("status") != "exact" or raw.get("value") is None:
+        return _display_result(raw), str(raw.get("unit", ""))
+    try:
+        value = Decimal(str(raw["value"]))
+    except (InvalidOperation, ValueError):
+        return _display_result(raw), str(raw.get("unit", ""))
+    unit = str(raw.get("unit", ""))
+    if key == "P_zad" and unit == "s":
+        value *= 1000
+        unit = "мс"
+    elif key == "P_pr" and unit == "bit/s":
+        value /= 1000
+        unit = "кбит/с"
+    elif key == "P_pot" and unit == "1":
+        value *= 100
+        unit = "%"
+    elif key == "P_bal" and unit == "1":
+        unit = "1"
+    else:
+        unit = {"s": "с", "byte": "байт", "bit/s": "бит/с", "1": "доля"}.get(unit, unit)
+    shown = f"{value:.4f}".rstrip("0").rstrip(".") or "0"
+    return shown.replace(".", ","), unit
+
+
+def _rounded_result(value: dict[str, Any], digits: int) -> str:
+    if value.get("status") == "exact" and value.get("value") is not None:
+        try:
+            return f"{Decimal(str(value['value'])):.{digits}f}".replace(".", ",")
+        except (InvalidOperation, ValueError):
+            pass
+    return _display_result(value)
+
+
 def _metric_trace_lines(key: str, trace: dict[str, Any]) -> list[str]:
     """Explain recorded K1 inputs without recomputing any indicator in the GUI."""
     if key in {"P_zad", "P_pr", "P_pot"}:
@@ -369,7 +409,7 @@ class RadarChart(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), Qt.GlobalColor.white)
         center = QPointF(self.width() / 2, self.height() / 2 + 4)
-        radius = min(self.width(), self.height()) * 0.32
+        radius = min(self.width(), self.height()) * 0.28
         keys = list(METRIC_LABELS)
         angles = [-math.pi / 2 + index * 2 * math.pi / len(keys) for index in range(len(keys))]
         painter.setPen(QPen(QColor("#CBD2D9"), 1))
@@ -384,9 +424,12 @@ class RadarChart(QWidget):
             angle = angles[index]
             end = QPointF(center.x() + radius * math.cos(angle), center.y() + radius * math.sin(angle))
             painter.drawLine(center, end)
-            label_rect = QRectF(end.x() - 43, end.y() - 14, 86, 25)
-            painter.setPen(QPen(QColor("#273444"), 1))
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, METRIC_LABELS[key])
+            label_center = QPointF(center.x() + radius * 1.25 * math.cos(angle),
+                                   center.y() + radius * 1.25 * math.sin(angle))
+            label_rect = QRectF(label_center.x() - 65, label_center.y() - 14, 130, 28)
+            painter.setPen(QPen(QColor("#617b99"), 1))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter,
+                             {"P_pr": "Скорость", "P_res": "Ресурсы"}.get(key, METRIC_NAMES[key]))
             score = self.metrics.get(key, {}).get("partial_score", {})
             if score.get("status") == "exact" and score.get("value") is not None:
                 try:
@@ -418,6 +461,9 @@ class RadarChart(QWidget):
             painter.setBrush(QBrush(QColor(35, 116, 171, 45)))
             painter.setPen(QPen(QColor("#2374AB"), 2))
             painter.drawPolygon(polygon)
+            painter.setBrush(QColor("#2374AB"))
+            for point in polygon:
+                painter.drawEllipse(point, 3.5, 3.5)
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor("#2374AB"), 2))
@@ -524,7 +570,7 @@ class ComparisonContributionChart(QWidget):
     def __init__(self, assessments: list[dict[str, Any]], parent: QWidget | None = None):
         super().__init__(parent)
         self.assessments = assessments
-        self.setMinimumHeight(265)
+        self.setMinimumHeight(300)
         self.setMinimumWidth(500)
 
     @staticmethod
@@ -547,11 +593,11 @@ class ComparisonContributionChart(QWidget):
         for tick in range(0, 101, 20):
             x = left + width * tick / 100
             painter.setPen(QPen(QColor("#D9E4F2"), 1))
-            painter.drawLine(QPointF(x, 30), QPointF(x, 145))
+            painter.drawLine(QPointF(x, 35), QPointF(x, 185))
             painter.setPen(QPen(QColor("#71879F"), 1))
-            painter.drawText(QRectF(x - 18, 146, 36, 20), Qt.AlignmentFlag.AlignCenter, str(tick))
+            painter.drawText(QRectF(x - 18, 188, 36, 20), Qt.AlignmentFlag.AlignCenter, str(tick))
         for row, assessment in enumerate(self.assessments[:2]):
-            y = 53 + row * 53
+            y = 57 + row * 70
             name = str(assessment.get("experiment_id", f"Опыт {row + 1}"))
             painter.drawText(QRectF(4, y, left - 10, 24), Qt.AlignmentFlag.AlignLeft,
                              name[:24])
@@ -573,7 +619,7 @@ class ComparisonContributionChart(QWidget):
                 end = left + width * min(100, lower_sum + low) / 100
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(colors[index])
-                painter.drawRect(QRectF(start, y, max(0, end - start), 22))
+                painter.drawRect(QRectF(start, y, max(0, end - start), 32))
                 lower_sum += low
                 upper_sum += high
             if upper_sum > lower_sum:
@@ -581,21 +627,21 @@ class ComparisonContributionChart(QWidget):
                 end = left + width * min(100, upper_sum) / 100
                 painter.setPen(QPen(QColor("#8055A2"), 1))
                 painter.setBrush(QBrush(QColor("#E8DDF0"), Qt.BrushStyle.BDiagPattern))
-                painter.drawRect(QRectF(start, y, max(0, end - start), 22))
+                painter.drawRect(QRectF(start, y, max(0, end - start), 32))
             integral = assessment.get("integral", {})
             total = self._number(integral.get("value"))
             total_text = (f"{total:.2f}".replace(".", ",") if total is not None else
                           _display_result(integral))
             painter.setPen(QPen(QColor("#273444"), 1))
             painter.drawText(QRectF(min(right - 66, left + min(100, lower_sum) * width / 100 + 5),
-                                    y, 66, 24),
+                                    y, 66, 32),
                              Qt.AlignmentFlag.AlignLeft, total_text)
             if has_unknown:
-                painter.drawText(QRectF(left, y + 24, width, 18), Qt.AlignmentFlag.AlignLeft,
+                painter.drawText(QRectF(left, y + 36, width, 18), Qt.AlignmentFlag.AlignLeft,
                                  "Есть неизвестные вклады; полоса показывает только известную часть")
         for index, key in enumerate(METRIC_LABELS):
             x = 10 + (index % 4) * max(130, (self.width() - 20) / 4)
-            y = 185 + (index // 4) * 32
+            y = 230 + (index // 4) * 32
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(colors[index])
             painter.drawRect(QRectF(x, y + 3, 13, 13))
@@ -862,13 +908,15 @@ class AssessmentDialog(QWidget):
         context_label = QLabel("\n".join(context_lines))
         context_label.setWordWrap(True)
         context_label.setObjectName("cardDescription")
+        context_label.hide()
         if total is not None:
             context_label.setToolTip(f"Полная десятичная точность I(A): {total}")
         summary_strip = QHBoxLayout()
         score_card = QFrame()
         score_card.setObjectName("contentCard")
+        score_card.setMaximumHeight(130)
         score_layout = QVBoxLayout(score_card)
-        score_layout.setContentsMargins(22, 12, 22, 12)
+        score_layout.setContentsMargins(22, 9, 22, 9)
         score_caption = QLabel("Интегральная оценка I(A)")
         score_caption.setObjectName("cardDescription")
         score_layout.addWidget(score_caption)
@@ -887,24 +935,45 @@ class AssessmentDialog(QWidget):
         summary_strip.addWidget(score_card, 1)
         context_card = QFrame()
         context_card.setObjectName("contentCard")
+        context_card.setMaximumHeight(130)
         context_card_layout = QVBoxLayout(context_card)
-        context_card_layout.setContentsMargins(22, 14, 22, 14)
+        context_card_layout.setContentsMargins(22, 9, 22, 9)
+        context_card_layout.setSpacing(4)
         result_state = QLabel(
             "Результат определён" if integral.get("status") == "exact" else
             "Интервальная оценка" if integral.get("status") == "interval" else
             "Полная оценка не определяется" if integral.get("status") == "not_applicable" else
             "Оценка не определена"
         )
-        result_state.setObjectName("cardTitle")
-        context_card_layout.addWidget(result_state)
+        result_state.setObjectName("resultStatus")
+        result_state.setProperty("status", integral.get("status"))
+        status_row = QHBoxLayout()
+        status_row.addWidget(result_state, alignment=Qt.AlignmentFlag.AlignLeft)
+        status_row.addStretch()
+        details = QPushButton("Данные расчёта")
+        details.clicked.connect(lambda: QMessageBox.information(
+            self, "Данные расчёта", context_label.text() +
+            ("\n\nПредупреждения:\n" + "\n".join(payload.get("warnings", []))
+             if payload.get("warnings") else "")))
+        status_row.addWidget(details)
+        context_card_layout.addLayout(status_row)
         if experiment is not None:
             algorithm_title = QLabel(
                 (experiment.passport.get("algorithm", {}).get("name_ru") or
                  experiment.passport.get("algorithm", {}).get("algorithm_id") or "Алгоритм не указан")
                 + f" · повтор {experiment.passport.get('repeat_id') or '—'}"
             )
+            algorithm_title.setObjectName("resultAlgorithm")
             algorithm_title.setWordWrap(True)
             context_card_layout.addWidget(algorithm_title)
+        context_description = QLabel(
+            "Синтетический контрольный опыт. Балл не является вероятностью успешной работы."
+            if experiment is not None and experiment.passport.get("data_origin") == "synthetic_reference" else
+            "Оценка относится к сохранённым наблюдениям и указанному профилю Ω."
+        )
+        context_description.setObjectName("cardDescription")
+        context_description.setWordWrap(True)
+        context_card_layout.addWidget(context_description)
         context_card_layout.addWidget(context_label)
         summary_strip.addWidget(context_card, 3)
         tabs = FullWidthTabs()
@@ -941,18 +1010,16 @@ class AssessmentDialog(QWidget):
         table_panel = QFrame()
         table_panel.setObjectName("contentCard")
         table_layout = QVBoxLayout(table_panel)
-        table_layout.setContentsMargins(14, 14, 14, 14)
-        table_heading = QLabel("Показатели и взвешенные вклады")
-        table_heading.setObjectName("cardTitle")
-        table_layout.addWidget(table_heading)
+        table_layout.setContentsMargins(0, 0, 0, 0)
         table = QTableWidget(0, 10)
         table.setObjectName("resultTable")
-        table.setHorizontalHeaderLabels(["Показатель", "Исходное значение", "Единица", "Направление",
-                                         "Статус", "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение"])
+        table.setHorizontalHeaderLabels(["Показатель", "Значение", "Единица", "Направление",
+                                         "Статус", "Нормализация", "Балл", "Вес", "Вклад", "Пояснение"])
         table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((190, 145, 70, 85, 90, 120, 100, 65, 100, 200)):
+        for column, width in enumerate((235, 130, 85, 85, 90, 120, 85, 65, 110, 200)):
             table.setColumnWidth(column, width)
         table.verticalHeader().hide()
+        table.verticalHeader().setDefaultSectionSize(42)
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         metrics = payload.get("metrics", {})
@@ -964,17 +1031,17 @@ class AssessmentDialog(QWidget):
             table.insertRow(row)
             raw = metric.get("raw", {})
             normalized = metric.get("normalized", {})
-            raw_value = _display_result(raw)
+            raw_value, raw_unit = _result_raw_for_table(key, raw)
             values = (
                 f"{METRIC_NAMES.get(key, key)} · {metric.get('symbol', key)}",
                 raw_value,
-                raw.get("unit", ""),
+                raw_unit,
                 {"min": "меньше", "max": "больше"}.get(metric.get("direction"), metric.get("direction", "")),
                 RESULT_STATUS_LABELS.get(raw.get("status"), raw.get("status", "")),
                 _display_result(normalized),
-                _display_result(metric.get("partial_score", {})),
-                _display_number(metric.get("weight", "")),
-                _display_result(metric.get("contribution", {})),
+                _rounded_result(metric.get("partial_score", {}), 2),
+                _display_number(metric.get("weight", "")).replace(".", ","),
+                _rounded_result(metric.get("contribution", {}), 4),
                 raw.get("reason") or normalized.get("reason") or "",
             )
             detail = json.dumps(metric, ensure_ascii=False, indent=2)
@@ -994,10 +1061,7 @@ class AssessmentDialog(QWidget):
                                  "Показать статус, нормализацию и пояснение")
         show_details.clicked.connect(toggle_details)
         table_layout.addWidget(table, 1)
-        table_layout.addWidget(show_details)
-        table_layout.addWidget(QLabel(
-            "Полные десятичные значения доступны в подсказках строк и при экспорте JSON/CSV."
-        ))
+        table_layout.addWidget(show_details, alignment=Qt.AlignmentFlag.AlignLeft)
         overview.addWidget(table_panel, 3)
         self.radar_chart = RadarChart(payload)
         radar_panel = QFrame()
@@ -1008,22 +1072,20 @@ class AssessmentDialog(QWidget):
         radar_heading.setObjectName("cardTitle")
         radar_layout.addWidget(radar_heading)
         radar_layout.addWidget(self.radar_chart, 1)
-        radar_export = QPushButton("Сохранить радар PNG")
-        radar_export.clicked.connect(lambda: self.export_png(self.radar_chart, "Сохранить радар", "radar.png"))
-        radar_layout.addWidget(radar_export)
         overview.addWidget(radar_panel, 2)
         summary_layout.addLayout(overview, 1)
         groups = payload.get("groups", {})
         group_names = {"I_1": "качество", "I_2": "ресурсы",
                        "I_3": "устойчивость/адаптивность", "I_4": "служебный обмен"}
         group_line = "Группы: " + "; ".join(
-            f"{group_names.get(key, key)} {_display_result(value)}"
+            f"{group_names.get(key, key)} {_rounded_result(value, 2)}"
             for key, value in groups.items()
         )
-        summary_layout.addWidget(QLabel(group_line))
+        groups_label = QLabel(group_line)
+        groups_label.setObjectName("cardDescription")
+        groups_label.setWordWrap(True)
+        summary_layout.addWidget(groups_label)
         warnings = payload.get("warnings", [])
-        if warnings:
-            summary_layout.addWidget(QLabel("Предупреждения:\n" + "\n".join(warnings)))
         tabs.addTab(summary, "Таблица и радар")
 
         compare_page = QWidget()
@@ -1032,8 +1094,15 @@ class AssessmentDialog(QWidget):
         compare_card = QFrame()
         compare_card.setObjectName("contentCard")
         compare_card_layout = QVBoxLayout(compare_card)
-        compare_card_layout.addWidget(QLabel("Сводные результаты", objectName="cardTitle"))
-        series_controls = QHBoxLayout()
+        compare_heading = QHBoxLayout()
+        compare_heading.addWidget(QLabel("Сводные результаты", objectName="cardTitle"))
+        compare_heading.addStretch()
+        choose_assessments = QPushButton("Выбрать опыты")
+        compare_heading.addWidget(choose_assessments)
+        compare_card_layout.addLayout(compare_heading)
+        series_picker = QWidget()
+        series_controls = QHBoxLayout(series_picker)
+        series_controls.setContentsMargins(0, 0, 0, 0)
         series_combo = QComboBox()
         series_combo.setObjectName("resultSeriesSelector")
         first_combo = QComboBox()
@@ -1041,7 +1110,9 @@ class AssessmentDialog(QWidget):
         for caption, combo in (("Серия", series_combo), ("Опыт 1", first_combo), ("Опыт 2", second_combo)):
             series_controls.addWidget(QLabel(caption))
             series_controls.addWidget(combo, 1)
-        compare_card_layout.addLayout(series_controls)
+        compare_card_layout.addWidget(series_picker)
+        series_picker.hide()
+        choose_assessments.clicked.connect(lambda: series_picker.setVisible(not series_picker.isVisible()))
         compare_table = QTableWidget(0, 6)
         compare_table.setObjectName("comparisonSummary")
         compare_table.setHorizontalHeaderLabels(
@@ -1050,8 +1121,9 @@ class AssessmentDialog(QWidget):
         for column, width in enumerate((150, 270, 105, 190, 85)):
             compare_table.setColumnWidth(column, width)
         compare_table.verticalHeader().hide()
+        compare_table.verticalHeader().setDefaultSectionSize(48)
         compare_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        compare_table.setMaximumHeight(145)
+        compare_table.setMaximumHeight(190)
         compare_card_layout.addWidget(compare_table)
         compare_note = QLabel()
         compare_note.setWordWrap(True)
@@ -1099,6 +1171,7 @@ class AssessmentDialog(QWidget):
 
         def update_series_comparison() -> None:
             compare_table.setRowCount(0)
+            compare_table.setFixedHeight(90)
             self.series_contribution_chart.assessments = []
             first_id, second_id = first_combo.currentData(), second_combo.currentData()
             if store is None or first_id is None or second_id is None:
@@ -1123,9 +1196,10 @@ class AssessmentDialog(QWidget):
                 values = (item_payload.get("experiment_id", "—"),
                           passport.get("algorithm", {}).get("name_ru") or "—", satellites,
                           item_payload.get("profile_id", "—"), passport.get("repeat_id") or "—",
-                          _display_result(item_payload.get("integral", {})))
+                          _rounded_result(item_payload.get("integral", {}), 4))
                 for column, value in enumerate(values):
                     compare_table.setItem(row, column, QTableWidgetItem(str(value)))
+            compare_table.setFixedHeight(40 + 48 * compare_table.rowCount())
             reasons = comparability_reasons(selected[0][1], selected[0][2],
                                             selected[1][1], selected[1][2])
             compare_note.setText(
@@ -1145,10 +1219,6 @@ class AssessmentDialog(QWidget):
             fill_series()
         else:
             update_series_comparison()
-        contributions_export = QPushButton("Сохранить вклады PNG")
-        contributions_export.clicked.connect(lambda: self.export_png(
-            self.series_contribution_chart, "Сохранить вклады", "contributions.png"))
-        compare_layout.addWidget(contributions_export)
         tabs.addTab(compare_page, "Сравнение серии")
 
         timeline_page = QWidget()
@@ -1434,6 +1504,10 @@ class AssessmentDialog(QWidget):
         export_menu = QMenu(self)
         export_menu.addAction("Результат JSON", self.export_json)
         export_menu.addAction("Показатели CSV", self.export_csv)
+        export_menu.addAction("Радар PNG", lambda: self.export_png(
+            self.radar_chart, "Сохранить радар", "radar.png"))
+        export_menu.addAction("Вклады PNG", lambda: self.export_png(
+            self.series_contribution_chart, "Сохранить вклады", "contributions.png"))
         export_button = QPushButton("Экспорт результата")
         export_button.setMenu(export_menu)
         exports.addWidget(export_button)
@@ -2005,6 +2079,10 @@ PASSPORT_LABELS = {
     "result": "Результат", "changes": "Изменения",
     "capture_start_s": "Начало регистрации, с", "capture_end_s": "Конец регистрации, с",
     "evaluation_start_s": "Начало оценки, с", "evaluation_end_s": "Конец оценки, с",
+    "interval_convention": "Интервалы состояний", "packet_tx_point": "Точка отправки",
+    "packet_rx_point": "Точка приёма", "channel_grid_rule": "Границы интервалов",
+    "channel_byte_scope": "Область байтов", "channel_counter_point": "Момент учёта",
+    "capacity_scope": "Область ресурса", "routing_traffic_scope": "Служебный обмен",
     "packet_cohort": "Совокупность пакетов", "delay_definition": "Определение задержки",
     "loss_timeout_s": "Порог потери, с", "goodput_definition": "Полезная скорость",
     "time_base": "Шкала времени", "time_origin": "Начало отсчёта",
@@ -2097,6 +2175,26 @@ PASSPORT_ENUM_LABELS = {
     "transport": {"UDP": "UDP", "TCP": "TCP", "udp": "UDP", "tcp": "TCP"},
     "time_mode": {"model_time": "Модельное время", "real_time": "Реальное время"},
     "model": {"none_except_scheduled_outage": "Только заданное отключение"},
+    "time_origin": {"experiment_start": "Начало опыта"},
+    "time_base": {"shared_model_clock": "Единое модельное время"},
+    "interval_convention": {"[start,end)": "[начало; конец)"},
+    "packet_cohort": {"tx_time_s in [evaluation_start_s,evaluation_end_s)":
+                      "Отправленные в окне оценки"},
+    "route_observation_mode": {"exact_state_changes": "Точные изменения состояний"},
+    "packet_tx_point": {"application_datagram_handoff_at_source":
+                        "Передача приложением в сетевой стек"},
+    "packet_rx_point": {"first_correct_application_datagram_delivery_at_destination":
+                        "Первое корректное получение приложением"},
+    "channel_counter_mode": {"interval_delta": "Приращение за интервал"},
+    "channel_counter_point": {"egress_serialization_complete": "Завершение сериализации"},
+    "capacity_scope": {"network_layer_serialization_service_rate_excluding_link_layer_overhead":
+                       "Сервис сериализации сетевого уровня"},
+    "channel_byte_scope": {"network_layer_packet_bytes_including_network_and_transport_headers_excluding_link_layer_overhead":
+                           "Сетевые пакеты с сетевыми и транспортными заголовками; без канальных накладных расходов"},
+    "channel_grid_rule": {"union_of_nominal_boundaries_and_link_state_or_parameter_changes":
+                          "Общая сетка и моменты изменения каналов"},
+    "routing_traffic_scope": {"all_routing_control_transmissions_on_all_declared_directed_links; reception_not_counted_again":
+                              "Передачи маршрутизации по выбранной сети"},
 }
 
 
@@ -2104,6 +2202,7 @@ class PassportEditor(QWidget):
     """Nine passport forms backed by one lossless JSON value."""
 
     changed = Signal()
+    observation_page_changed = Signal(int)
     SECTION_TABS = (
         ("Общие сведения", "Паспорт: общие сведения и алгоритм"),
         ("Среда", "Паспорт: источник и среда выполнения"),
@@ -2121,6 +2220,7 @@ class PassportEditor(QWidget):
         self._data: dict[str, Any] = {}
         self._invalid_fields: set[tuple[str | int, ...]] = set()
         self._array_tables: dict[tuple[str, ...], QTableWidget] = {}
+        self.observation_page = 0
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         self.tabs = FullWidthTabs()
@@ -2226,7 +2326,13 @@ class PassportEditor(QWidget):
         elif kind == "string" and key in PASSPORT_ENUM_LABELS:
             control = QComboBox()
             control.setProperty("passportField", True)
-            allows_custom_value = key in {"execution_source", "time_mode", "model"}
+            allows_custom_value = key in {
+                "execution_source", "time_mode", "model", "time_origin", "time_base",
+                "interval_convention", "packet_cohort", "route_observation_mode",
+                "packet_tx_point", "packet_rx_point", "channel_counter_mode",
+                "channel_counter_point", "capacity_scope", "channel_byte_scope",
+                "channel_grid_rule", "routing_traffic_scope",
+            }
             if allows_custom_value:
                 control.setEditable(True)
             control.addItem("Не задано", None)
@@ -2757,6 +2863,122 @@ class PassportEditor(QWidget):
                           parameters=("horizon_s", "confirmation_window_s"))
         parent.addLayout(row)
 
+    def _observation_extra_dialog(self, title: str, keys: tuple[str, ...]) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(800, 520)
+        layout = QVBoxLayout(dialog)
+        measurement = self._get(("measurement",))
+        if isinstance(measurement, dict):
+            self._fields(layout, measurement, ("measurement",), keys)
+        layout.addStretch()
+        close = QPushButton("Закрыть")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
+
+    def _observation_section(self, parent: QVBoxLayout) -> None:
+        pages = QStackedWidget()
+        self._observation_stack = pages
+        measurement = self._get(("measurement",))
+        if not isinstance(measurement, dict):
+            parent.addWidget(QLabel("Поля наблюдения не заданы."))
+            return
+
+        def form(rows: tuple[tuple[str, ...], ...], *, note: str | None = None) -> QVBoxLayout:
+            page = QWidget()
+            page.setObjectName("passportContent")
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            card = QFrame()
+            card.setObjectName("contentCard")
+            content = QVBoxLayout(card)
+            content.setContentsMargins(22, 24, 22, 24)
+            content.setSpacing(18)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(18)
+            grid.setVerticalSpacing(13)
+            for row, keys in enumerate(rows):
+                for column, key in enumerate(keys):
+                    if key in measurement:
+                        grid.addWidget(self._field(key, measurement[key], ("measurement", key)), row, column)
+            content.addLayout(grid)
+            if note:
+                message = QLabel(note)
+                message.setObjectName("infoNote")
+                message.setWordWrap(True)
+                content.addWidget(message)
+            content.addStretch()
+            page_layout.addWidget(card, 1)
+            pages.addWidget(page)
+            return content
+
+        intervals = form((
+            ("evaluation_start_s", "evaluation_end_s", "capture_start_s"),
+            ("capture_end_s", "time_origin", "time_base"),
+            ("timestamp_resolution_s", "clock_error_bound_s", "interval_convention"),
+        ))
+        next_actions = QHBoxLayout()
+        for title, destination in (("Точки регистрации пакетов и маршрутов", 1),
+                                   ("Правила учёта канальных объёмов", 2)):
+            button = QPushButton(title)
+            button.clicked.connect(lambda _checked=False, index=destination: self.set_observation_page(index))
+            next_actions.addWidget(button)
+        intervals.addLayout(next_actions)
+
+        packets = form((
+            ("loss_timeout_s", "packet_cohort"),
+            ("route_observation_mode", "route_time_error_bound_s"),
+            ("packet_tx_point", "packet_rx_point"),
+        ), note=(
+            "Маршруты — фактически установленные решения. Повторный поиск кратчайшего пути "
+            "при оценивании не выполняется. Определения задержки и полезной скорости сохраняются в паспорте."
+        ))
+        packet_actions = QHBoxLayout()
+        back = QPushButton("К интервалам наблюдения")
+        back.clicked.connect(lambda: self.set_observation_page(0))
+        packet_actions.addWidget(back)
+        extra = QPushButton("Определения и дополнительные условия")
+        extra.clicked.connect(lambda: self._observation_extra_dialog(
+            "Определения пакетов и маршрутов",
+            ("delay_definition", "goodput_definition", "goodput_notes_ru", "route_semantics")))
+        packet_actions.addWidget(extra)
+        packets.addLayout(packet_actions)
+
+        channels = form((
+            ("channel_nominal_interval_s", "channel_counter_mode", "channel_counter_point"),
+            ("channel_max_atomic_packet_bytes", "channel_categories_disjoint", "capacity_scope"),
+        ))
+        channels.takeAt(channels.count() - 1)
+        for key in ("channel_byte_scope",):
+            if key in measurement:
+                channels.addWidget(self._field(key, measurement[key], ("measurement", key)))
+        channel_grid = QGridLayout()
+        for column, key in enumerate(("channel_grid_rule", "routing_traffic_scope")):
+            if key in measurement:
+                channel_grid.addWidget(self._field(key, measurement[key], ("measurement", key)), 0, column)
+        channels.addLayout(channel_grid)
+        channels.addStretch()
+        channel_actions = QHBoxLayout()
+        back_channels = QPushButton("К интервалам наблюдения")
+        back_channels.clicked.connect(lambda: self.set_observation_page(0))
+        channel_actions.addWidget(back_channels)
+        extra_channels = QPushButton("Правило проверки ёмкости")
+        extra_channels.clicked.connect(lambda: self._observation_extra_dialog(
+            "Проверка ёмкости канала", ("capacity_check_rule", "capacity_check_note_ru")))
+        channel_actions.addWidget(extra_channels)
+        channels.addLayout(channel_actions)
+        parent.addWidget(pages, 1)
+        pages.setCurrentIndex(self.observation_page)
+
+    def set_observation_page(self, index: int) -> None:
+        if not 0 <= index <= 2:
+            return
+        self.observation_page = index
+        if hasattr(self, "_observation_stack"):
+            self._observation_stack.setCurrentIndex(index)
+        self.observation_page_changed.emit(index)
+
     def _open_additional_passport_fields(self) -> None:
         paths = (
             ("algorithm", "settings_completeness"), ("algorithm", "note_ru"),
@@ -3003,9 +3225,7 @@ class PassportEditor(QWidget):
         elif index == 5:
             self._array_card(layout, "События сценария", ("scenario", "events"))
         elif index == 6:
-            measurement = self._get(("measurement",))
-            keys = tuple(key for key in measurement if key not in {"balance", "stability", "adaptivity"}) if isinstance(measurement, dict) else ()
-            self._card(layout, "Условия и полнота наблюдения", measurement, ("measurement",), keys)
+            self._observation_section(layout)
         elif index == 7:
             self._checks_section(layout)
         else:
@@ -3018,6 +3238,7 @@ class PassportEditor(QWidget):
         if not isinstance(value, dict):
             raise ValueError("Паспорт должен быть объектом")
         self._data = deepcopy(value)
+        self.observation_page = 0
         self._invalid_fields.clear()
         self._array_tables.clear()
         selected = max(self.tabs.currentIndex(), 0)
@@ -3030,6 +3251,7 @@ class PassportEditor(QWidget):
             self.tabs.addTab(self._section(index), label)
         self.tabs.setCurrentIndex(min(selected, self.tabs.count() - 1))
         self.tabs.blockSignals(False)
+        self.observation_page_changed.emit(0)
 
     def value(self) -> dict[str, Any]:
         if self._invalid_fields:
@@ -3983,6 +4205,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.profile, "Профиль оценивания")
         self.tabs.currentChanged.connect(self._update_editor_heading)
         self.passport.tabs.currentChanged.connect(self._update_editor_heading)
+        self.passport.observation_page_changed.connect(self._update_editor_heading)
         self.profile.pages.currentChanged.connect(self._update_editor_heading)
         self._update_editor_heading()
         self.passport.changed.connect(self.mark_input_dirty)
@@ -4020,8 +4243,16 @@ class MainWindow(QMainWindow):
     def _update_editor_heading(self, _index: int = 0) -> None:
         section = self.passport.tabs.currentIndex()
         if self.tabs.currentWidget() is self.passport and 0 <= section < len(self.passport.SECTION_TABS):
-            title = self.passport.SECTION_TABS[section][1]
-            self.editor_code.setText(f"П05.{section + 1}")
+            if section == 6:
+                title = (
+                    "Наблюдение: интервалы и временная база",
+                    "Наблюдение: пакеты и маршрутные решения",
+                    "Наблюдение: канальные счётчики и области учёта",
+                )[self.passport.observation_page]
+                self.editor_code.setText(("П05.7", "П05.7а", "П05.7б")[self.passport.observation_page])
+            else:
+                title = self.passport.SECTION_TABS[section][1]
+                self.editor_code.setText(f"П05.{section + 1}")
         else:
             title = {
                 1: "Пакеты: отправка и получение",

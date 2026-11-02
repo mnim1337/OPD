@@ -6,6 +6,7 @@ on:
       - feat/stage-6-delivery
       - feat/manual-input-result-verification
       - fix/title-page-spec
+      - fix/observation-result-spec
   workflow_dispatch:
 
 permissions:

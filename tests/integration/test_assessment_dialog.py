@@ -181,9 +181,12 @@ def test_result_views_render_with_a_saved_control_experiment(tmp_path: Path) -> 
     detail_toggle.click()
     assert all(not table.isColumnHidden(column) for column in (3, 4, 5, 9))
     assert [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())] == [
-        "Показатель", "Исходное значение", "Единица", "Направление", "Статус",
-        "Нормализация", "Bᵢ(A)", "wᵢ", "Kᵢ(A)", "Пояснение",
+        "Показатель", "Значение", "Единица", "Направление", "Статус",
+        "Нормализация", "Балл", "Вес", "Вклад", "Пояснение",
     ]
+    assert table.item(0, 2).text() == "мс"
+    assert table.item(1, 2).text() == "кбит/с"
+    assert table.item(2, 2).text() == "%"
     assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
         f"{gui_module.METRIC_NAMES[key]} · {payload['metrics'][key].get('symbol', key)}"
         for key in metric_order
@@ -620,6 +623,31 @@ def test_passport_editor_uses_local_forms_and_round_trips_all_sections(reference
     app.processEvents()
 
 
+def test_observation_forms_follow_spec_and_keep_passport_values(
+    reference_folder: Path, tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    original = read_folder(reference_folder).passport
+    window = MainWindow(tmp_path / "observation.sqlite3")
+    window.passport.set_value(original)
+    window.show_editor()
+    window.passport.tabs.setCurrentIndex(6)
+    assert window.editor_code.text() == "П05.7"
+    assert window.passport._observation_stack.currentIndex() == 0
+    window.passport.set_observation_page(1)
+    assert window.editor_code.text() == "П05.7а"
+    timeout = window.passport.findChild(QLineEdit, "passport.measurement.loss_timeout_s")
+    assert timeout is not None
+    assert window.passport.value()["measurement"]["loss_timeout_s"] == original["measurement"]["loss_timeout_s"]
+    window.passport.set_observation_page(2)
+    assert window.editor_code.text() == "П05.7б"
+    assert window.passport._observation_stack.currentIndex() == 2
+    assert window.passport.value() == original
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
 def test_passport_fields_are_editable_and_restore_nulls(
     reference_folder: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -668,6 +696,11 @@ def test_passport_fields_are_editable_and_restore_nulls(
     editor._open_algorithm_settings()
     editor._environment_note_dialog()
     editor._network_settings_dialog()
+    editor._observation_extra_dialog(
+        "Определения пакетов и маршрутов",
+        ("delay_definition", "goodput_definition", "goodput_notes_ru", "route_semantics"))
+    editor._observation_extra_dialog(
+        "Проверка ёмкости канала", ("capacity_check_rule", "capacity_check_note_ru"))
     for path in (("network", "nodes"), ("network", "links"), ("traffic", "flows"),
                  ("scenario", "events"), ("measurement", "stability", "checks"),
                  ("measurement", "adaptivity", "checks")):
